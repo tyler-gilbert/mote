@@ -1,8 +1,12 @@
+pub mod control;
 pub mod drive_base;
 pub mod flash_manager;
+pub mod guidance;
 pub mod imu;
 pub mod lidar;
+pub mod navigation;
 pub mod power_gate;
+pub mod pubsub;
 pub mod status_led;
 pub mod usb_serial;
 pub mod wifi;
