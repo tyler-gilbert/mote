@@ -5,7 +5,7 @@ pub use mote_api::messages::pubsub::*;
 
 const NOTIFY_SUBS: usize = 6;
 const NOTIFY_PUBS: usize = 6;
-const NOTIFY_CAPACITY: usize = 4;
+const NOTIFY_CAPACITY: usize = 2;
 
 pub static NOTIFY_PUBSUB: PubSubChannel<CriticalSectionRawMutex, Message, NOTIFY_CAPACITY, NOTIFY_SUBS, NOTIFY_PUBS> =
     PubSubChannel::new();

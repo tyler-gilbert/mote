@@ -16,6 +16,7 @@ impl Context {
         _timestamp: units::Time,
         scan: Option<pubsub::Scan>,
         _imu: Option<pubsub::Imu>,
+        _reference_frame: &pubsub::ReferenceFrame,
     ) -> Option<pubsub::Position> {
         if let Some(scan) = scan {
             for point in scan.iter() {

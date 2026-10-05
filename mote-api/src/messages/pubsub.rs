@@ -53,9 +53,9 @@ pub type Scan = heapless::vec::Vec<ScanPoint, 100>;
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Coordinate {
     /// Latitude waypoint position
-    latitude: units::imperial::Degrees,
+    pub latitude: units::imperial::Degrees,
     /// Longitude waypoint position
-    longitude: units::imperial::Degrees,
+    pub longitude: units::imperial::Degrees,
 }
 
 impl Default for Coordinate {
@@ -92,8 +92,8 @@ impl Default for Guidance {
 }
 
 /// Position expressed as north/east offsets and a heading.
-#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
-pub struct Legend {
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq, Default)]
+pub struct ReferenceFrame {
     /// Postion of the southwest reference point
     pub southwest: Coordinate,
     /// Position of the northeast reference point
@@ -215,6 +215,8 @@ pub enum Message {
     MotorDrive(MotorDrive),
     /// Guidance Route
     Route(Route),
+    /// Reference frame
+    ReferenceFrame(ReferenceFrame),
 }
 
 impl alloc::fmt::Debug for Message {

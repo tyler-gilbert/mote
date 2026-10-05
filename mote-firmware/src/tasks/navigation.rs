@@ -16,6 +16,7 @@ async fn navigation_task() {
 #[derive(Default)]
 struct NavigationContext {
     context: mote_api::work::navigation::Context,
+    reference_frame: pubsub::ReferenceFrame,
     telemetry_selection: pubsub::TelemetrySelection,
 }
 
@@ -24,7 +25,8 @@ impl NavigationContext {
         if self.telemetry_selection.is_send_lidar() {
             pubsub::SCAN_PUBLISH_CHAN.send(scan.clone()).await;
         }
-        self.context.update(pubsub::get_timestamp(), Some(scan), None)
+        self.context
+            .update(pubsub::get_timestamp(), Some(scan), None, &self.reference_frame)
     }
 
     async fn execute(&mut self) {
@@ -43,7 +45,10 @@ impl NavigationContext {
                         self.telemetry_selection = telemetry_selection;
                         None
                     }
-                    pubsub::Message::Imu(imu) => self.context.update(pubsub::get_timestamp(), None, Some(imu)),
+                    pubsub::Message::Imu(imu) => {
+                        self.context
+                            .update(pubsub::get_timestamp(), None, Some(imu), &self.reference_frame)
+                    }
                     _ => None,
                 },
                 Either::Second(scan) => self.handle_incoming_scan(scan).await,
