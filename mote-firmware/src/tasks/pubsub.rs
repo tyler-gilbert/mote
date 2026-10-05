@@ -1,5 +1,5 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Sender};
+use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::{PubSubChannel, Publisher, Subscriber};
 pub use mote_api::messages::pubsub::*;
 
@@ -11,10 +11,13 @@ pub static NOTIFY_PUBSUB: PubSubChannel<CriticalSectionRawMutex, Message, NOTIFY
     PubSubChannel::new();
 
 pub static SCAN_CHAN: Channel<CriticalSectionRawMutex, Scan, 1> = Channel::new();
+pub static SCAN_PUBLISH_CHAN: Channel<CriticalSectionRawMutex, Scan, 1> = Channel::new();
 
 pub type NotifyPublisher =
     Publisher<'static, CriticalSectionRawMutex, Message, NOTIFY_CAPACITY, NOTIFY_SUBS, NOTIFY_PUBS>;
 pub type NotifySubscriber =
     Subscriber<'static, CriticalSectionRawMutex, Message, NOTIFY_CAPACITY, NOTIFY_SUBS, NOTIFY_PUBS>;
 
-pub type ScanSender<'a> = Sender<'a, CriticalSectionRawMutex, Scan, 1>;
+pub fn get_timestamp() -> units::Time {
+    units::Time::new(embassy_time::Instant::now().as_millis() as f32)
+}

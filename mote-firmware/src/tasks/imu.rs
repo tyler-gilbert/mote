@@ -7,14 +7,14 @@ use lsm6ds33::{
 use mote_api::messages::mote_to_host;
 use mote_api::messages::mote_to_host::{Bit, BitResult, ImuAxisTriple, ImuMeasurement};
 
-use super::{ImuResources, Irqs};
+use super::{ImuResources, Irqs, pubsub};
 use crate::helpers::update_bit_result;
 use crate::tasks::CONFIGURATION_STATE;
 use crate::wifi::DATA_OFFLOAD_CHANNEL;
 
 // NUMBER OF MISSED IMU READS IN A ROW BEFORE WE FLAG A Bit FAILURE
 const MISSED_READ_THRESHOLD: u8 = 10;
-const INVALID_TEMPERATURE: f32 = 25.0; // value returned by get_sensor_data on read failure 
+const INVALID_TEMPERATURE: f32 = 25.0; // value returned by get_sensor_data on read failure
 // (MUST be 25.0 since imu.read_all() may not return an error but just return 0
 // for all values, in this case the temp is read as 25)
 
@@ -67,10 +67,26 @@ async fn imu_task(r: ImuResources) {
     let mut imu = reset_imu(i2c).await;
     let mut missed_read_count: u8 = 0;
 
+    let publisher = pubsub::NOTIFY_PUBSUB.publisher().expect("No publisher for IMU task");
+
     // Sensor Reading loop
     loop {
         if let Some((temp, measurement)) = get_sensor_data(&mut imu).await {
             let _ = DATA_OFFLOAD_CHANNEL.try_send(mote_to_host::Message::ImuMeasurement(measurement));
+            let outgoing = pubsub::Imu {
+                timestamp: pubsub::get_timestamp(),
+                accel: pubsub::Accel {
+                    x: units::Acceleration::new(measurement.accel.x),
+                    y: units::Acceleration::new(measurement.accel.y),
+                    z: units::Acceleration::new(measurement.accel.z),
+                },
+                gyro: pubsub::Gyro {
+                    x: units::AngularAcceleration::new(measurement.gyro.x),
+                    y: units::AngularAcceleration::new(measurement.gyro.y),
+                    z: units::AngularAcceleration::new(measurement.gyro.z),
+                },
+            };
+            publisher.publish(pubsub::Message::Imu(outgoing)).await;
 
             // get sensor data errored, update Bit and log, and missed read count
             if temp == INVALID_TEMPERATURE {

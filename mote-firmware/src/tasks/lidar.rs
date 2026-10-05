@@ -7,11 +7,11 @@ use mote_api::messages::mote_to_host;
 use mote_api::messages::mote_to_host::{Bit, BitResult};
 use static_cell::StaticCell;
 
-use super::{Irqs, RplidarC1Resources};
+use super::{Irqs, RplidarC1Resources, pubsub};
 use crate::helpers::update_bit_result;
 use crate::tasks::lidar::rp_c1_driver::{LidarState, Point, RPLidarC1};
 use crate::tasks::{CONFIGURATION_STATE, power_gate};
-use crate::wifi::DATA_OFFLOAD_CHANNEL;
+// use crate::wifi::DATA_OFFLOAD_CHANNEL;
 
 const MAX_POINTS_PER_SCAN_MESSAGE: usize = 100;
 
@@ -65,6 +65,8 @@ async fn lidar_state_machine_task(r: RplidarC1Resources) {
     let mut point_buf: [rp_c1_driver::Point; MAX_POINTS_PER_SCAN_MESSAGE] = [rp_c1_driver::Point::default(); _];
     let mut valid_points = 0;
 
+    let scan_sender = pubsub::SCAN_CHAN.sender();
+
     let mut driver = RPLidarC1::new(uart);
 
     // Update init state
@@ -116,9 +118,27 @@ async fn lidar_state_machine_task(r: RplidarC1Resources) {
             LidarState::ProcessSample => {
                 // We don't care if these packets get lost, so don't block if the channel is
                 // full
-                let _ = DATA_OFFLOAD_CHANNEL.try_send(mote_to_host::Message::Scan(
-                    point_buf[..valid_points].iter().map(|&point| point.into()).collect(),
-                ));
+
+                // let _ = DATA_OFFLOAD_CHANNEL.try_send(mote_to_host::Message::Scan(
+                //    point_buf[..valid_points].iter().map(|&point| point.into()).collect(),
+                // ));
+
+                let timestamp = pubsub::get_timestamp();
+
+                let outgoing: pubsub::Scan = point_buf[..valid_points]
+                    .iter()
+                    .map(|&point| {
+                        let scan_point: mote_to_host::Point = point.into();
+                        pubsub::ScanPoint {
+                            timestamp,
+                            quality: scan_point.quality,
+                            angle: units::PlaneAngle::new(scan_point.angle_rad),
+                            distance: units::Length::new(scan_point.distance_mm / 1000.0_f32),
+                        }
+                    })
+                    .collect();
+
+                scan_sender.send(outgoing).await;
 
                 LidarState::ReceiveSample
             }

@@ -6,6 +6,10 @@ load("//@star/prelude/rules/run.star", "run_add_exec", "run_log_level_passthroug
 
 _CHIP = "RP235x"
 
+cargo_env = {
+    "RUSTUP_TOOLCHAIN": "",
+}
+
 run_add_exec(
     "build",
     command = "cargo",
@@ -15,6 +19,7 @@ run_add_exec(
     ],
     working_directory = ".",
     log_level = run_log_level_passthrough(),
+    env = cargo_env,
 )
 
 run_add_exec(
@@ -30,6 +35,7 @@ run_add_exec(
         """,
     ],
     working_directory = ".",
+    env = cargo_env,
     log_level = run_log_level_passthrough(),
 )
 
@@ -43,7 +49,7 @@ run_add_exec(
     working_directory = ".",
     env = {
         "DEFMT_LOG": "info",
-    },
+    } | cargo_env,
     log_level = run_log_level_passthrough(),
 )
 
@@ -57,17 +63,20 @@ run_add_exec(
     working_directory = ".",
     env = {
         "DEFMT_LOG": "info",
-    },
+    } | cargo_env,
     log_level = run_log_level_passthrough(),
 )
 
 run_add_exec(
     "trace",
-    command = "sh",
+    command = "cargo",
     args = [
-        "-c",
-        "DEFMT_LOG=trace cargo run --release",
+        "run",
+        "--release",
     ],
+    env = {
+        "DEFMT_LOG": "trace",
+    } | cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )
@@ -92,6 +101,7 @@ run_add_exec(
         "-D",
         "warnings",
     ],
+    env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )
@@ -103,6 +113,7 @@ run_add_exec(
         "fmt",
         "--check",
     ],
+    env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )
@@ -113,6 +124,7 @@ run_add_exec(
     args = [
         "update",
     ],
+    env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )
@@ -129,6 +141,7 @@ run_add_exec(
         picotool uf2 convert target/thumbv8m.main-none-eabihf/release/mote-firmware -t elf \"mote-firmware-v${VERSION//./_}.uf2\" --family rp2350-arm-s
         """,
     ],
+    env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )
@@ -145,6 +158,7 @@ run_add_exec(
         cargo clippy --all-features -- -D warnings
         """,
     ],
+    env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
 )

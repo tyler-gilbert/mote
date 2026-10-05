@@ -25,6 +25,8 @@ pub struct Gyro {
 /// Inertial measurement unit data containing acceleration and angular acceleration.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Imu {
+    /// Timestamp
+    pub timestamp: units::Time,
     /// Linear acceleration measurements.
     pub accel: Accel,
     /// Angular acceleration measurements.
@@ -34,6 +36,8 @@ pub struct Imu {
 /// A single measured point in a scan.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct ScanPoint {
+    /// Timestamp
+    pub timestamp: units::Time,
     /// Quality value reported for this measurement.
     pub quality: u8,
     /// Angle of the measurement.
@@ -45,9 +49,32 @@ pub struct ScanPoint {
 /// A collection of points captured during a scan.
 pub type Scan = heapless::vec::Vec<ScanPoint, 100>;
 
+/// Waypoint to navigate to
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct Coordinate {
+    /// Latitude waypoint position
+    latitude: units::imperial::Degrees,
+    /// Longitude waypoint position
+    longitude: units::imperial::Degrees,
+}
+
+impl Default for Coordinate {
+    fn default() -> Self {
+        Self {
+            latitude: units::imperial::Degrees::new(0.0),
+            longitude: units::imperial::Degrees::new(0.0),
+        }
+    }
+}
+
+/// A collection of points captured during a scan.
+pub type Route = heapless::vec::Vec<Coordinate, 100>;
+
 /// Guidance describing a target heading and distance.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Guidance {
+    /// Timestamp
+    pub timestamp: units::Time,
     /// Heading toward the target.
     pub heading: units::PlaneAngle,
     /// Distance to the target.
@@ -57,6 +84,7 @@ pub struct Guidance {
 impl Default for Guidance {
     fn default() -> Self {
         Self {
+            timestamp: units::Time::new(0.0),
             heading: units::PlaneAngle::new(0.0),
             distance: units::Length::new(0.0),
         }
@@ -65,11 +93,22 @@ impl Default for Guidance {
 
 /// Position expressed as north/east offsets and a heading.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct Legend {
+    /// Postion of the southwest reference point
+    pub southwest: Coordinate,
+    /// Position of the northeast reference point
+    pub northeast: Coordinate,
+    /// Lidar distance scale factor
+    pub scale: f32,
+}
+
+/// Position expressed as north/east offsets and a heading.
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Position {
+    /// Timestamp
+    pub timestamp: units::Time,
     /// Northward position offset.
-    pub north: units::Length,
-    /// Eastward position offset.
-    pub east: units::Length,
+    pub coordinate: Coordinate,
     /// Heading in degrees.
     pub heading: units::imperial::Degrees,
 }
@@ -77,8 +116,8 @@ pub struct Position {
 impl Default for Position {
     fn default() -> Self {
         Self {
-            north: units::Length::new(0.0),
-            east: units::Length::new(0.0),
+            timestamp: units::Time::new(0.0),
+            coordinate: Default::default(),
             heading: units::imperial::Degrees::new(0.0),
         }
     }
@@ -87,10 +126,68 @@ impl Default for Position {
 /// Angular velocity commands for the left and right sides.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Control {
+    /// Timestamp
+    pub timestamp: units::Time,
     /// Angular velocity command for the left side.
     pub left: units::AngularVelocity,
     /// Angular velocity command for the right side.
     pub right: units::AngularVelocity,
+}
+
+/// Telemetry selection for pubsub messages
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq, Default)]
+pub enum TelemetrySelection {
+    /// Do not send any pubsub telemetry
+    #[default]
+    None,
+    /// Send pubsub control telemetry
+    Control,
+    /// Send pubsub guidance telemetry
+    Guidance,
+    /// Send pubsub navigation telemetry
+    Navigation,
+    /// Send pubsub imu telemetry
+    Imu,
+    /// Send data for remote operation
+    RemoteControl,
+    /// Send pubsub lidar telemetry
+    Lidar,
+}
+
+impl TelemetrySelection {
+    /// Send control telemtry
+    pub fn is_send_control(&self) -> bool {
+        *self == Self::Control || *self == Self::RemoteControl
+    }
+
+    /// Send guidance telemtry
+    pub fn is_send_guidance(&self) -> bool {
+        *self == Self::Guidance || *self == Self::RemoteControl
+    }
+
+    /// Send nav telemtry
+    pub fn is_send_navigation(&self) -> bool {
+        *self == Self::Navigation || *self == Self::RemoteControl
+    }
+
+    /// Send imu telemtry
+    pub fn is_send_imu(&self) -> bool {
+        *self == Self::Imu || *self == Self::RemoteControl
+    }
+
+    /// Send lidar telemtry
+    pub fn is_send_lidar(&self) -> bool {
+        *self == Self::Lidar
+    }
+}
+
+/// Direct motor drive command
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct MotorDrive {
+    /// left drive speed
+    left: units::AngularVelocity,
+    /// right drive speed
+    right: units::AngularVelocity,
 }
 
 /// A message published between mote components.
@@ -102,6 +199,8 @@ pub enum Message {
     EnableControlMode,
     /// Request to disable control mode.
     DisableControlMode,
+    /// Enable pubsub telemetry
+    TelemetrySelection(TelemetrySelection),
     /// Guidance to a target.
     Guidance(Guidance),
     /// Position estimate.
@@ -110,6 +209,12 @@ pub enum Message {
     Control(Control),
     /// Inertial measurement data.
     Imu(Imu),
+    /// A batch of LiDAR scan points.
+    LidarScan(Scan),
+    /// Motor Drive
+    MotorDrive(MotorDrive),
+    /// Guidance Route
+    Route(Route),
 }
 
 impl alloc::fmt::Debug for Message {
@@ -132,5 +237,10 @@ impl Message {
     /// Wraps control data in a message.
     pub fn new_from_control(value: Control) -> Self {
         Self::Control(value)
+    }
+
+    /// Wraps LiDAR scan data in a message.
+    pub fn new_from_lidar_scan(value: Scan) -> Self {
+        Self::LidarScan(value)
     }
 }

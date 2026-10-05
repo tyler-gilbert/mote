@@ -38,16 +38,6 @@ pub struct SetDriveBaseVelocity {
     pub right_velocity_rad_per_s: f32,
 }
 
-/// Mote Control mode
-#[cfg_attr(feature = "schemars", derive(JsonSchema))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum ControlMode {
-    /// Remote control mode; Mote responds to host commands.
-    Remote,
-    /// Autonomous control mode; Mote drives autonomously.
-    Autonomous,
-}
-
 /// A message sent from the host to Mote.
 #[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -65,8 +55,6 @@ pub enum Message {
     SetUid(SetUid),
     /// Commands the drive base's wheel velocities.
     SetDriveBaseVelocity(SetDriveBaseVelocity),
-    /// Sets the Mote Control mode
-    SetControlMode(ControlMode),
     /// Pubsub message
     #[cfg(not(feature = "schemars"))]
     PubSub(super::pubsub::Message),

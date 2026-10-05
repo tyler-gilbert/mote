@@ -20,25 +20,32 @@ load(
     "checkout_add_cargo_bin",
 )
 
-spaces_add_devutils(
-    "spaces0",
-    "v0.21.0",
-    devutils_version = "devutils-v0.1.15",
-    system_paths = ["/usr/bin", "/bin"],
-    is_activate_sccache = not info_is_ci(),
-)
+if sdk_is_owner():
+    spaces_add_devutils(
+        "spaces0",
+        "v0.21.0",
+        devutils_version = "devutils-v0.1.15",
+        system_paths = ["/usr/bin", "/bin"],
+        is_activate_sccache = not info_is_ci(),
+    )
 
-spaces_add_star_formatter(
-    "star_formatter0",
-    configure_zed = True,
-)
+    spaces_add_star_formatter(
+        "star_formatter0",
+        configure_zed = True,
+    )
 
-starship_add_bash(
-    "starship0",
-    shortcuts = {},
-    install_binary = False,
-    deps = [":spaces0"],
-)
+    starship_add_bash(
+        "starship0",
+        shortcuts = {},
+        install_binary = False,
+        deps = [":spaces0"],
+    )
+
+    rust_add(
+        "rust_toolchain",
+        version = "1.95",
+        deps = [":rust_workspace_toolchain"],
+    )
 
 checkout_add_any_assets(
     "rust_workspace_toolchain",
@@ -48,12 +55,6 @@ checkout_add_any_assets(
             destination = "//rust-toolchain.toml",
         ),
     ],
-)
-
-rust_add(
-    "rust_toolchain",
-    version = "1.95",
-    deps = [":rust_workspace_toolchain"],
 )
 
 node_add(

@@ -15,27 +15,16 @@ async fn navigation_task() {
 
 #[derive(Default)]
 struct NavigationContext {
-    full_scan: heapless::Deque<pubsub::ScanPoint, 5000>,
+    context: mote_api::work::navigation::Context,
+    telemetry_selection: pubsub::TelemetrySelection,
 }
 
 impl NavigationContext {
-    fn handle_incoming_scan(&mut self, scan: pubsub::Scan) -> Option<pubsub::Position> {
-        for point in scan {
-            if self.full_scan.is_full() {
-                let _ = self.full_scan.pop_front();
-            }
-            let _ = self.full_scan.push_back(point);
+    async fn handle_incoming_scan(&mut self, scan: pubsub::Scan) -> Option<pubsub::Position> {
+        if self.telemetry_selection.is_send_lidar() {
+            pubsub::SCAN_PUBLISH_CHAN.send(scan.clone()).await;
         }
-
-        if self.full_scan.is_full() {
-            for point in self.full_scan.iter() {}
-        }
-
-        None
-    }
-
-    fn handle_incoming_imu(&mut self, _imu: pubsub::Imu) -> Option<pubsub::Position> {
-        None
+        self.context.update(pubsub::get_timestamp(), Some(scan), None)
     }
 
     async fn execute(&mut self) {
@@ -50,10 +39,14 @@ impl NavigationContext {
             let incoming = select(subscriber.next_message_pure(), scan_receiver.receive()).await;
             let position = match incoming {
                 Either::First(incoming_data) => match incoming_data {
-                    pubsub::Message::Imu(imu) => self.handle_incoming_imu(imu),
+                    pubsub::Message::TelemetrySelection(telemetry_selection) => {
+                        self.telemetry_selection = telemetry_selection;
+                        None
+                    }
+                    pubsub::Message::Imu(imu) => self.context.update(pubsub::get_timestamp(), None, Some(imu)),
                     _ => None,
                 },
-                Either::Second(scan) => self.handle_incoming_scan(scan),
+                Either::Second(scan) => self.handle_incoming_scan(scan).await,
             };
             if let Some(position) = position {
                 publisher.publish(pubsub::Message::new_from_position(position)).await;

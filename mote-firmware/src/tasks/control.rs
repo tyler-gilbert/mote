@@ -15,6 +15,7 @@ async fn control_task() {
 #[derive(Default)]
 struct ControlContext {
     control_mode_enabled: bool,
+    context: mote_api::work::control::Context,
     position: pubsub::Position,
 }
 
@@ -22,12 +23,7 @@ impl ControlContext {
     fn handle_guidance_message(&mut self, guidance_message: pubsub::Guidance) -> Option<pubsub::Control> {
         // decide to turn right or left based on the heading/distance
         if self.control_mode_enabled {
-            let pubsub::Guidance { heading, distance } = guidance_message;
-
-            Some(pubsub::Control {
-                left: units::AngularVelocity::new(0.0),
-                right: units::AngularVelocity::new(0.0),
-            })
+            self.context.update(pubsub::get_timestamp(), guidance_message)
         } else {
             None
         }
