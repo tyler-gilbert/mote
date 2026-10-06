@@ -136,14 +136,8 @@ async fn core1_task(
     imu::init(spawner, imu_r).await;
     info!("IMU INIT complete");
 
-    control::init(spawner).await;
-    info!("Control INIT complete");
-
-    guidance::init(spawner).await;
-    info!("Guidance INIT complete");
-
-    navigation::init(spawner).await;
-    info!("Navigation INIT complete");
+    gnc::init(spawner).await;
+    info!("Gnc INIT complete");
 
     drive_base::init(
         spawner,

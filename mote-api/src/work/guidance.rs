@@ -1,7 +1,7 @@
 // This needs some sample guidance routes
 // Work: from a given location compute a heading and a distance
 
-use crate::messages::pubsub;
+use crate::messages::router;
 
 #[derive(Default)]
 /// Context for doing the control work
@@ -12,9 +12,9 @@ impl Context {
     pub fn update(
         &mut self,
         _timestamp: units::Time,
-        _position: pubsub::Position,
-        _route: &pubsub::Route,
-    ) -> Option<pubsub::Guidance> {
+        _position: &router::Position,
+        _route: &router::Route,
+    ) -> Option<router::Guidance> {
         None
     }
 }

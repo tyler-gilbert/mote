@@ -4,4 +4,4 @@ pub mod host_to_mote;
 pub mod mote_to_host;
 
 /// PubSub Messages
-pub mod pubsub;
+pub mod router;

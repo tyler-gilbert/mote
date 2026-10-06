@@ -206,5 +206,5 @@ pub enum Message {
     State(Box<State>),
     /// Pubsub Message
     #[cfg(not(feature = "schemars"))]
-    PubSub(super::pubsub::Message),
+    PubSub(super::router::Message),
 }

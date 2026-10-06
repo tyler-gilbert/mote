@@ -38,6 +38,15 @@ pub struct SetDriveBaseVelocity {
     pub right_velocity_rad_per_s: f32,
 }
 
+impl From<super::router::MotorDrive> for SetDriveBaseVelocity {
+    fn from(motor_drive: super::router::MotorDrive) -> Self {
+        Self {
+            left_velocity_rad_per_s: motor_drive.left.into(),
+            right_velocity_rad_per_s: motor_drive.right.into(),
+        }
+    }
+}
+
 /// A message sent from the host to Mote.
 #[cfg_attr(feature = "schemars", derive(JsonSchema))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -57,5 +66,5 @@ pub enum Message {
     SetDriveBaseVelocity(SetDriveBaseVelocity),
     /// Pubsub message
     #[cfg(not(feature = "schemars"))]
-    PubSub(super::pubsub::Message),
+    PubSub(super::router::Message),
 }

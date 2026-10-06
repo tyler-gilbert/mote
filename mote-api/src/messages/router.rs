@@ -128,10 +128,8 @@ impl Default for Position {
 pub struct Control {
     /// Timestamp
     pub timestamp: units::Time,
-    /// Angular velocity command for the left side.
-    pub left: units::AngularVelocity,
-    /// Angular velocity command for the right side.
-    pub right: units::AngularVelocity,
+    /// Motor drive settings
+    pub motor_drive: MotorDrive,
 }
 
 /// Telemetry selection for pubsub messages
@@ -185,9 +183,9 @@ impl TelemetrySelection {
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct MotorDrive {
     /// left drive speed
-    left: units::AngularVelocity,
+    pub left: units::AngularVelocity,
     /// right drive speed
-    right: units::AngularVelocity,
+    pub right: units::AngularVelocity,
 }
 
 /// A message published between mote components.
@@ -201,6 +199,10 @@ pub enum Message {
     DisableControlMode,
     /// Enable pubsub telemetry
     TelemetrySelection(TelemetrySelection),
+    /// Reference frame
+    ReferenceFrame(ReferenceFrame),
+    /// Motor Drive
+    MotorDrive(MotorDrive),
     /// Guidance to a target.
     Guidance(Guidance),
     /// Position estimate.
@@ -211,12 +213,8 @@ pub enum Message {
     Imu(Imu),
     /// A batch of LiDAR scan points.
     LidarScan(Scan),
-    /// Motor Drive
-    MotorDrive(MotorDrive),
     /// Guidance Route
     Route(Route),
-    /// Reference frame
-    ReferenceFrame(ReferenceFrame),
 }
 
 impl alloc::fmt::Debug for Message {

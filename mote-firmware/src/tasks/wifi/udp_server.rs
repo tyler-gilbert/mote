@@ -1,11 +1,11 @@
 use defmt::{error, info, warn};
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{Either3, select3};
 use embassy_net::Stack;
 use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
 use mote_api::HostLink;
 use mote_api::messages::{host_to_mote, mote_to_host};
 
-use crate::tasks::pubsub;
+use crate::tasks::router;
 use crate::tasks::wifi::{DATA_OFFLOAD_CHANNEL, MOTOR_COMMAND_CHANNEL};
 
 pub const UDP_SERVER_PORT: u16 = 7475;
@@ -39,12 +39,9 @@ impl UdpServerContextZero {
 
 pub(super) struct UdpServerContext<'a> {
     socket: UdpSocket<'a>,
-    publisher: pubsub::NotifyPublisher,
-    subscriber: pubsub::NotifySubscriber,
     link: HostLink,
     message_buffer: [u8; 4096],
     client: Option<UdpMetadata>,
-    telemetry_selection: pubsub::TelemetrySelection,
 }
 
 impl<'a> UdpServerContext<'a> {
@@ -57,21 +54,11 @@ impl<'a> UdpServerContext<'a> {
             &mut context_zero.tx_buffer,
         );
 
-        let publisher = pubsub::NOTIFY_PUBSUB
-            .publisher()
-            .expect("not pubsub publisher for UDP server task");
-        let subscriber = pubsub::NOTIFY_PUBSUB
-            .subscriber()
-            .expect("not pubsub subscriber for UDP server task");
-
         Self {
             socket,
-            publisher,
-            subscriber,
             link: HostLink::new(),
             message_buffer: [0; 4096],
             client: None,
-            telemetry_selection: pubsub::TelemetrySelection::None,
         }
     }
 
@@ -81,25 +68,21 @@ impl<'a> UdpServerContext<'a> {
         }
 
         loop {
-            match select4(
+            match select3(
                 self.socket.recv_from(&mut self.message_buffer),
                 DATA_OFFLOAD_CHANNEL.receive(),
-                self.subscriber.next_message_pure(),
-                pubsub::SCAN_PUBLISH_CHAN.receive(),
+                router::TO_WIFI_CHAN.receive(),
             )
             .await
             {
-                Either4::First(Ok((bytes_read, ep))) => self.handle_received_datagram(bytes_read, ep).await,
-                Either4::First(Err(err)) => {
+                Either3::First(Ok((bytes_read, ep))) => self.handle_received_datagram(bytes_read, ep).await,
+                Either3::First(Err(err)) => {
                     error!("UDP recv error: {}", err);
                 }
-                Either4::Second(message) => self.handle_data_offload(message).await,
-                Either4::Third(pubsub_message) => self.handle_local_pubsub_message(pubsub_message).await,
-                Either4::Fourth(scan_message) => {
-                    self.send_to_client(mote_to_host::Message::PubSub(
-                        mote_api::messages::pubsub::Message::LidarScan(scan_message),
-                    ))
-                    .await
+                Either3::Second(message) => self.handle_data_offload(message).await,
+                Either3::Third(telemetry_message) => {
+                    self.send_to_client(mote_to_host::Message::PubSub(telemetry_message))
+                        .await
                 }
             }
         }
@@ -159,49 +142,6 @@ impl<'a> UdpServerContext<'a> {
         }
     }
 
-    async fn handle_local_pubsub_message(&mut self, message: pubsub::Message) {
-        match message {
-            pubsub::Message::Position(position) => {
-                if self.telemetry_selection.is_send_navigation() {
-                    self.send_to_client(mote_to_host::Message::PubSub(pubsub::Message::Position(position)))
-                        .await;
-                }
-            }
-            pubsub::Message::Guidance(guidance) => {
-                if self.telemetry_selection.is_send_guidance() {
-                    self.send_to_client(mote_to_host::Message::PubSub(pubsub::Message::Guidance(guidance)))
-                        .await;
-                }
-            }
-            pubsub::Message::Control(control_message) => {
-                if self.telemetry_selection.is_send_control() {
-                    let message = host_to_mote::SetDriveBaseVelocity {
-                        left_velocity_rad_per_s: control_message.left.into(),
-                        right_velocity_rad_per_s: control_message.right.into(),
-                    };
-                    MOTOR_COMMAND_CHANNEL.send(message).await;
-                    self.send_to_client(mote_to_host::Message::PubSub(pubsub::Message::Control(control_message)))
-                        .await;
-                }
-            }
-            pubsub::Message::LidarScan(value) => {
-                if self.telemetry_selection.is_send_lidar() {
-                    self.send_to_client(mote_to_host::Message::PubSub(pubsub::Message::LidarScan(value)))
-                        .await;
-                }
-            }
-            pubsub::Message::Imu(value) => {
-                if self.telemetry_selection.is_send_imu() {
-                    self.send_to_client(mote_to_host::Message::PubSub(pubsub::Message::Imu(value)))
-                        .await;
-                }
-            }
-            _ => {
-                defmt::error!("Unhandled local pubsub: {}", message);
-            }
-        }
-    }
-
     async fn handle_data_offload(&mut self, message: mote_to_host::Message) {
         self.send_to_client(message).await;
     }
@@ -224,22 +164,8 @@ impl<'a> UdpServerContext<'a> {
         }
     }
 
-    async fn handle_pubsub_message_from_host(&mut self, message: pubsub::Message) {
-        match &message {
-            pubsub::Message::TelemetrySelection(telemetry_selection) => {
-                defmt::info!("Setting Telemetry Selection: {}", telemetry_selection);
-                self.telemetry_selection = telemetry_selection.clone();
-                self.publisher
-                    .publish(pubsub::Message::TelemetrySelection(telemetry_selection.clone()))
-                    .await;
-            }
-            pubsub::Message::EnableControlMode | pubsub::Message::DisableControlMode => {
-                self.publisher.publish(message).await;
-            }
-            _ => {
-                defmt::error!("Unhandled remote pubusb: {}", message);
-            }
-        }
+    async fn handle_router_message_from_host(&mut self, message: router::Message) {
+        router::TO_GNC_CHAN.send(message).await;
     }
 
     async fn handle_command(&mut self, rx_message: host_to_mote::Message) {
@@ -255,7 +181,7 @@ impl<'a> UdpServerContext<'a> {
                 let _ = MOTOR_COMMAND_CHANNEL.try_send(cmd);
             }
             host_to_mote::Message::PubSub(message) => {
-                self.handle_pubsub_message_from_host(message).await;
+                self.handle_router_message_from_host(message).await;
             }
             _ => {
                 error!("Received unhandled message type");

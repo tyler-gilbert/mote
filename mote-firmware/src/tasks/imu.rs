@@ -7,7 +7,7 @@ use lsm6ds33::{
 use mote_api::messages::mote_to_host;
 use mote_api::messages::mote_to_host::{Bit, BitResult, ImuAxisTriple, ImuMeasurement};
 
-use super::{ImuResources, Irqs, pubsub};
+use super::{ImuResources, Irqs, router};
 use crate::helpers::update_bit_result;
 use crate::tasks::CONFIGURATION_STATE;
 use crate::wifi::DATA_OFFLOAD_CHANNEL;
@@ -67,26 +67,24 @@ async fn imu_task(r: ImuResources) {
     let mut imu = reset_imu(i2c).await;
     let mut missed_read_count: u8 = 0;
 
-    let publisher = pubsub::NOTIFY_PUBSUB.publisher().expect("No publisher for IMU task");
-
     // Sensor Reading loop
     loop {
         if let Some((temp, measurement)) = get_sensor_data(&mut imu).await {
             let _ = DATA_OFFLOAD_CHANNEL.try_send(mote_to_host::Message::ImuMeasurement(measurement));
-            let outgoing = pubsub::Imu {
-                timestamp: pubsub::get_timestamp(),
-                accel: pubsub::Accel {
+            let outgoing = router::Imu {
+                timestamp: router::get_timestamp(),
+                accel: router::Accel {
                     x: units::Acceleration::new(measurement.accel.x),
                     y: units::Acceleration::new(measurement.accel.y),
                     z: units::Acceleration::new(measurement.accel.z),
                 },
-                gyro: pubsub::Gyro {
+                gyro: router::Gyro {
                     x: units::AngularAcceleration::new(measurement.gyro.x),
                     y: units::AngularAcceleration::new(measurement.gyro.y),
                     z: units::AngularAcceleration::new(measurement.gyro.z),
                 },
             };
-            publisher.publish(pubsub::Message::Imu(outgoing)).await;
+            router::TO_GNC_CHAN.send(router::Message::Imu(outgoing)).await;
 
             // get sensor data errored, update Bit and log, and missed read count
             if temp == INVALID_TEMPERATURE {
