@@ -11,7 +11,6 @@ use super::{Irqs, RplidarC1Resources, router};
 use crate::helpers::update_bit_result;
 use crate::tasks::lidar::rp_c1_driver::{LidarState, Point, RPLidarC1};
 use crate::tasks::{CONFIGURATION_STATE, power_gate};
-// use crate::wifi::DATA_OFFLOAD_CHANNEL;
 
 const MAX_POINTS_PER_SCAN_MESSAGE: usize = 100;
 
@@ -123,20 +122,25 @@ async fn lidar_state_machine_task(r: RplidarC1Resources) {
 
                 let timestamp = router::get_timestamp();
 
-                let outgoing: router::Scan = point_buf[..valid_points]
+                let point_cloud: router::PointCloud = point_buf[..valid_points]
                     .iter()
-                    .map(|&point| {
-                        let scan_point: mote_to_host::Point = point.into();
-                        router::ScanPoint {
-                            timestamp,
-                            quality: scan_point.quality,
-                            angle: units::PlaneAngle::new(scan_point.angle_rad),
-                            distance: units::Length::new(scan_point.distance_mm / 1000.0_f32),
+                    .filter_map(|&point| {
+                        if point.quality >= 20 {
+                            let scan_point: mote_to_host::Point = point.into();
+                            Some(router::ScanPoint {
+                                quality: scan_point.quality,
+                                angle: units::PlaneAngle::new(scan_point.angle_rad),
+                                distance: units::Length::new(scan_point.distance_mm / 1000.0_f32),
+                            })
+                        } else {
+                            None
                         }
                     })
                     .collect();
 
-                router::TO_GNC_CHAN.send(router::Message::LidarScan(outgoing)).await;
+                router::TO_GNC_CHAN
+                    .send(router::Message::LidarScan(router::Scan { timestamp, point_cloud }))
+                    .await;
 
                 LidarState::ReceiveSample
             }

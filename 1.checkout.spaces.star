@@ -23,8 +23,8 @@ load(
 if sdk_is_owner():
     spaces_add_devutils(
         "spaces0",
-        "v0.21.0",
-        devutils_version = "devutils-v0.1.15",
+        "v0.22.3",
+        devutils_version = "devutils-v0.1.16",
         system_paths = ["/usr/bin", "/bin"],
         is_activate_sccache = not info_is_ci(),
     )

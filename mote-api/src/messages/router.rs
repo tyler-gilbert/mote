@@ -36,8 +36,6 @@ pub struct Imu {
 /// A single measured point in a scan.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct ScanPoint {
-    /// Timestamp
-    pub timestamp: units::Time,
     /// Quality value reported for this measurement.
     pub quality: u8,
     /// Angle of the measurement.
@@ -46,8 +44,17 @@ pub struct ScanPoint {
     pub distance: units::Length,
 }
 
-/// A collection of points captured during a scan.
-pub type Scan = heapless::vec::Vec<ScanPoint, 100>;
+/// Lidar point cloud
+pub type PointCloud = heapless::vec::Vec<ScanPoint, 100>;
+
+/// Waypoint to navigate to
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct Scan {
+    /// Timestamp
+    pub timestamp: units::Time,
+    /// Lidar point cloud
+    pub point_cloud: PointCloud,
+}
 
 /// Waypoint to navigate to
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
@@ -150,32 +157,36 @@ pub enum TelemetrySelection {
     RemoteControl,
     /// Send pubsub lidar telemetry
     Lidar,
+    /// Position Inputs
+    PositionInputs,
+    /// All
+    All
 }
 
 impl TelemetrySelection {
     /// Send control telemtry
     pub fn is_send_control(&self) -> bool {
-        *self == Self::Control || *self == Self::RemoteControl
+        *self == Self::Control || *self == Self::RemoteControl || *self == Self::All
     }
 
     /// Send guidance telemtry
     pub fn is_send_guidance(&self) -> bool {
-        *self == Self::Guidance || *self == Self::RemoteControl
+        *self == Self::Guidance || *self == Self::RemoteControl|| *self == Self::All
     }
 
     /// Send nav telemtry
     pub fn is_send_navigation(&self) -> bool {
-        *self == Self::Navigation || *self == Self::RemoteControl
+        *self == Self::Navigation || *self == Self::RemoteControl|| *self == Self::All
     }
 
     /// Send imu telemtry
     pub fn is_send_imu(&self) -> bool {
-        *self == Self::Imu || *self == Self::RemoteControl
+        *self == Self::Imu || *self == Self::RemoteControl || *self == Self::PositionInputs|| *self == Self::All
     }
 
     /// Send lidar telemtry
     pub fn is_send_lidar(&self) -> bool {
-        *self == Self::Lidar
+        *self == Self::Lidar || *self == Self::PositionInputs|| *self == Self::All
     }
 }
 

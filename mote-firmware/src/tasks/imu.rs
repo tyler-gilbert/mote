@@ -4,13 +4,13 @@ use embassy_rp::peripherals::I2C1;
 use lsm6ds33::{
     AccelerometerOutput, AccelerometerScale, Error as ImuError, GyroscopeFullScale, GyroscopeOutput, Lsm6ds33Async,
 };
-use mote_api::messages::mote_to_host;
+// use mote_api::messages::mote_to_host;
 use mote_api::messages::mote_to_host::{Bit, BitResult, ImuAxisTriple, ImuMeasurement};
 
 use super::{ImuResources, Irqs, router};
 use crate::helpers::update_bit_result;
 use crate::tasks::CONFIGURATION_STATE;
-use crate::wifi::DATA_OFFLOAD_CHANNEL;
+// use crate::wifi::DATA_OFFLOAD_CHANNEL;
 
 // NUMBER OF MISSED IMU READS IN A ROW BEFORE WE FLAG A Bit FAILURE
 const MISSED_READ_THRESHOLD: u8 = 10;
@@ -70,7 +70,8 @@ async fn imu_task(r: ImuResources) {
     // Sensor Reading loop
     loop {
         if let Some((temp, measurement)) = get_sensor_data(&mut imu).await {
-            let _ = DATA_OFFLOAD_CHANNEL.try_send(mote_to_host::Message::ImuMeasurement(measurement));
+            // let _ = DATA_OFFLOAD_CHANNEL.
+            // try_send(mote_to_host::Message::ImuMeasurement(measurement));
             let outgoing = router::Imu {
                 timestamp: router::get_timestamp(),
                 accel: router::Accel {

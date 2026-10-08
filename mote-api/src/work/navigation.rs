@@ -14,6 +14,7 @@ impl Context {
     pub fn update(
         &mut self,
         _timestamp: units::Time,
+        _position: Option<&router::Position>,
         _scan: Option<router::Scan>,
         _imu: Option<router::Imu>,
         _reference_frame: &router::ReferenceFrame,

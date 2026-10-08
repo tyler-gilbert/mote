@@ -180,7 +180,7 @@ impl<'a> UdpServerContext<'a> {
             host_to_mote::Message::SetDriveBaseVelocity(cmd) => {
                 let _ = MOTOR_COMMAND_CHANNEL.try_send(cmd);
             }
-            host_to_mote::Message::PubSub(message) => {
+            host_to_mote::Message::Router(message) => {
                 self.handle_router_message_from_host(message).await;
             }
             _ => {

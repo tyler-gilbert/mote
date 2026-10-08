@@ -66,5 +66,5 @@ pub enum Message {
     SetDriveBaseVelocity(SetDriveBaseVelocity),
     /// Pubsub message
     #[cfg(not(feature = "schemars"))]
-    PubSub(super::router::Message),
+    Router(super::router::Message),
 }

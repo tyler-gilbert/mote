@@ -19,7 +19,7 @@ struct Context {
     navigation_context: mote_api::work::navigation::Context,
     route: Option<router::Route>,
     control_mode_enabled: bool,
-    position: router::Position,
+    position: Option<router::Position>,
     reference_frame: Option<router::ReferenceFrame>,
     telemetry_selection: router::TelemetrySelection,
 }
@@ -30,8 +30,13 @@ impl Context {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::LidarScan(scan.clone()));
         }
         if let Some(reference_frame) = self.reference_frame.as_ref() {
-            self.navigation_context
-                .update(router::get_timestamp(), Some(scan), None, reference_frame)
+            self.navigation_context.update(
+                router::get_timestamp(),
+                self.position.as_ref(),
+                Some(scan),
+                None,
+                reference_frame,
+            )
         } else {
             None
         }
@@ -42,8 +47,13 @@ impl Context {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::Imu(imu.clone()));
         }
         if let Some(reference_frame) = self.reference_frame.as_ref() {
-            self.navigation_context
-                .update(router::get_timestamp(), None, Some(imu), reference_frame)
+            self.navigation_context.update(
+                router::get_timestamp(),
+                self.position.as_ref(),
+                None,
+                Some(imu),
+                reference_frame,
+            )
         } else {
             None
         }
@@ -77,8 +87,8 @@ impl Context {
 
     async fn handle_update(&mut self) {
         let timestamp = router::get_timestamp();
-        if let Some(route) = self.route.as_ref() {
-            let guidance = self.guidance_context.update(timestamp, &self.position, route);
+        if let (Some(route), Some(position)) = (self.route.as_ref(), self.position.as_ref()) {
+            let guidance = self.guidance_context.update(timestamp, position, route);
             self.send_guidance(guidance.as_ref()).await;
             if let Some(control) = self.control_context.update(timestamp, guidance) {
                 self.send_control(control.clone()).await;
@@ -113,14 +123,14 @@ impl Context {
             router::Message::Imu(imu) => self.handle_imu(imu).await,
             router::Message::LidarScan(scan) => self.handle_lidar_scan(scan).await,
             router::Message::Position(position) => {
-                self.position = position;
+                self.position = Some(position);
                 None
             }
             _ => None,
         };
         if let Some(position) = position {
             self.send_position(position.clone()).await;
-            self.position = position;
+            self.position = Some(position);
         }
         self.handle_update().await;
     }
