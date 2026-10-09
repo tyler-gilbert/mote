@@ -80,9 +80,9 @@ async fn imu_task(r: ImuResources) {
                     z: units::Acceleration::new(measurement.accel.z),
                 },
                 gyro: router::Gyro {
-                    x: units::AngularAcceleration::new(measurement.gyro.x),
-                    y: units::AngularAcceleration::new(measurement.gyro.y),
-                    z: units::AngularAcceleration::new(measurement.gyro.z),
+                    x: units::AngularVelocity::new(measurement.gyro.x),
+                    y: units::AngularVelocity::new(measurement.gyro.y),
+                    z: units::AngularVelocity::new(measurement.gyro.z),
                 },
             };
             router::TO_GNC_CHAN.send(router::Message::Imu(outgoing)).await;

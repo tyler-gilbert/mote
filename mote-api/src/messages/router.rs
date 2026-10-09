@@ -11,25 +11,25 @@ pub struct Accel {
     pub z: units::Acceleration,
 }
 
-/// Angular acceleration measurements along the three axes.
+/// Angular velocity measurements along the three axes.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Gyro {
-    /// Angular acceleration around the x-axis.
-    pub x: units::AngularAcceleration,
-    /// Angular acceleration around the y-axis.
-    pub y: units::AngularAcceleration,
-    /// Angular acceleration around the z-axis.
-    pub z: units::AngularAcceleration,
+    /// Angular velocity around the x-axis.
+    pub x: units::AngularVelocity,
+    /// Angular velocity around the y-axis.
+    pub y: units::AngularVelocity,
+    /// Angular velocity around the z-axis.
+    pub z: units::AngularVelocity,
 }
 
-/// Inertial measurement unit data containing acceleration and angular acceleration.
+/// Inertial measurement unit data containing acceleration and angular velocity.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Imu {
     /// Timestamp
     pub timestamp: units::Time,
     /// Linear acceleration measurements.
     pub accel: Accel,
-    /// Angular acceleration measurements.
+    /// Angular velocity measurements.
     pub gyro: Gyro,
 }
 
