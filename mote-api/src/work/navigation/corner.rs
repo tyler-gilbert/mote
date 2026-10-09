@@ -1,33 +1,37 @@
-//! Reference-corner detection from one accumulated lidar revolution.
+//! Reference-structure detection from one accumulated lidar revolution.
 //!
-//! The detector deliberately works on the robot-frame points exposed by
-//! [`Revolution::points`]. This keeps the lidar's clockwise angle convention
-//! out of the geometry code and makes the convex/concave prior explicit.
+//! Both reference structures are isosceles triangles with a 120-degree apex,
+//! and each stands at least 0.25 m in front of anything behind it. In a
+//! revolution, a structure is therefore a run of adjacent bins that opens with
+//! an empty bin or a jump towards the robot and closes with an empty bin or
+//! another jump.
+//!
+//! Walking along a run, the chord angle from its first point to each later
+//! point holds steady along the first wall (0, 0, 0, ...) and sweeps once the
+//! points turn onto the second wall (10, 20, 30, ...). The apex is the point
+//! where that happens. Each wall is then fitted with a line, and the vertex is
+//! their intersection.
+//!
+//! The detector works on the robot-frame points exposed by
+//! [`Revolution::points`], keeping the lidar's clockwise angle convention out
+//! of the geometry.
 
 use super::{
-    ANGLE_TOL, EXTREMUM_DEPTH, EXTREMUM_MARGIN, MAX_CLUSTER_GAP, MAX_RANGE, MAX_RMS, MIN_SCORE,
-    NE_INTERIOR_ANGLE, REVOLUTION_POINT_CAPACITY, Revolution, SW_INTERIOR_ANGLE, VERTEX_SNAP,
-    WALL_FIT_LEN, WALL_FIT_MIN_PATH, is_finite_length,
+    ANGLE_TOL, BIN_COUNT, EDGE_JUMP, MAX_RMS, MIN_LEG_RATIO, NE_INTERIOR_ANGLE,
+    REVOLUTION_POINT_CAPACITY, Revolution, SW_INTERIOR_ANGLE, is_finite_length, wrap_2pi, wrap_pi,
 };
 
-const MAX_CLUSTERS: usize = 32;
-const MAX_WALL_POINTS: usize = 64;
-const MIN_CLUSTER_POINTS: usize = 12;
-const MIN_WALL_POINTS: usize = 5;
-const ROBOT_X: units::Length = units::Length::new(0.0);
-const ROBOT_Y: units::Length = units::Length::new(0.0);
+const MIN_WALL_POINTS: usize = 4;
 const ZERO_LENGTH: units::Length = units::Length::new(0.0);
-
 const ONE: units::Scalar = units::Scalar::new(1.0);
 const TWO: units::Scalar = units::Scalar::new(2.0);
-const ONE_DEGREE: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI / 180.0);
 
 /// The two reference structures that can be identified by the detector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CornerKind {
-    /// The convex 120-degree corner at the southwest reference vertex.
+    /// The southwest reference structure, seen from its convex side.
     Southwest,
-    /// The concave 60-degree corner at the northeast reference vertex.
+    /// The northeast reference structure, seen from its concave side.
     Northeast,
 }
 
@@ -45,6 +49,9 @@ pub struct CornerObservation {
     /// Measured interior angle between the two directed walls.
     pub interior_angle_rad: units::PlaneAngle,
     /// Robot-frame direction of the directed-wall bisector.
+    ///
+    /// Diagnostic only: the structure's tilt is not controlled, so fixes use
+    /// the vertex alone.
     pub bisector_rad: units::PlaneAngle,
     /// A dimensionless quality score in the range 0..1.
     pub score: units::Scalar,
@@ -58,307 +65,180 @@ struct Point {
     bin: usize,
 }
 
-#[derive(Clone, Copy)]
-struct Direction {
+struct Line {
+    x: units::Length,
+    y: units::Length,
     angle: units::PlaneAngle,
-}
-
-struct LineFit {
-    centroid: Point,
-    direction: Direction,
     rms: units::Length,
 }
 
-struct WallFit {
-    line: LineFit,
-    points: heapless::Vec<Point, MAX_WALL_POINTS>,
-    path_length: units::Length,
-}
-
-struct Candidate {
-    observation: CornerObservation,
-}
-
-/// Detect the best SW and NE reference-corner observations in a revolution.
+/// Detect the best southwest and northeast reference structures in a revolution.
 ///
-/// A revolution is first rotated at its largest angular gap, so a real
-/// structure crossing the raw 0-degree bin is not split. Each continuous
-/// cluster is then tested using both range extrema and two independent line
-/// fits. At most one observation of each kind is returned.
+/// At most one observation of each kind is returned.
 pub fn detect_corners(revolution: &Revolution) -> heapless::Vec<CornerObservation, 4> {
     let mut points = heapless::Vec::<Point, REVOLUTION_POINT_CAPACITY>::new();
     for (x, y, range, bin) in revolution.points() {
-        if is_finite_length(x)
-            && is_finite_length(y)
-            && is_finite_length(range)
-            && x >= ZERO_LENGTH - MAX_RANGE
-            && x <= MAX_RANGE
-            && y >= ZERO_LENGTH - MAX_RANGE
-            && y <= MAX_RANGE
-            && range >= ZERO_LENGTH
-        {
+        if is_finite_length(x) && is_finite_length(y) && is_finite_length(range) {
             let _ = points.push(Point { x, y, range, bin });
         }
     }
 
-    let mut ordered = heapless::Vec::<Point, REVOLUTION_POINT_CAPACITY>::new();
-    if !points.is_empty() {
-        let start = largest_gap_start(&points);
-        for offset in 0..points.len() {
-            let index = (start + offset) % points.len();
-            let _ = ordered.push(points[index]);
-        }
-    }
-
-    let clusters = clusters(&ordered);
-    let mut best_sw: Option<Candidate> = None;
-    let mut best_ne: Option<Candidate> = None;
-
-    for &(start, end) in &clusters {
-        if end - start < MIN_CLUSTER_POINTS {
+    let mut southwest: Option<CornerObservation> = None;
+    let mut northeast: Option<CornerObservation> = None;
+    for start in 0..points.len() {
+        if !is_structure_start(&points, start) {
             continue;
         }
-        for seed in (start + EXTREMUM_MARGIN)..(end - EXTREMUM_MARGIN) {
-            if is_extremum(&ordered, seed, start, end, false)
-                && let Some(candidate) =
-                    verify_seed(&ordered, start, end, seed, CornerKind::Southwest)
-            {
-                replace_if_better(&mut best_sw, candidate);
-            }
-            if is_extremum(&ordered, seed, start, end, true)
-                && let Some(candidate) =
-                    verify_seed(&ordered, start, end, seed, CornerKind::Northeast)
-            {
-                replace_if_better(&mut best_ne, candidate);
-            }
+        let end = structure_end(&points, start);
+        let Some(observation) = observe_structure(&points[start..=end]) else {
+            continue;
+        };
+        let best = match observation.kind {
+            CornerKind::Southwest => &mut southwest,
+            CornerKind::Northeast => &mut northeast,
+        };
+        if best.is_none_or(|best| observation.score > best.score) {
+            *best = Some(observation);
         }
     }
 
     let mut result = heapless::Vec::new();
-    if let Some(candidate) = best_sw {
-        if candidate.observation.score >= MIN_SCORE {
-            let _ = result.push(candidate.observation);
-        }
-    }
-    if let Some(candidate) = best_ne {
-        if candidate.observation.score >= MIN_SCORE {
-            let _ = result.push(candidate.observation);
-        }
+    for observation in [southwest, northeast].into_iter().flatten() {
+        let _ = result.push(observation);
     }
     result
 }
 
-fn largest_gap_start(points: &[Point]) -> usize {
-    if points.len() < 2 {
-        return 0;
-    }
-    let mut largest_gap = 0usize;
-    let mut largest_index = 0usize;
-    for index in 0..points.len() {
-        let next = (index + 1) % points.len();
-        let gap = bin_gap(points[index].bin, points[next].bin);
-        if gap > largest_gap {
-            largest_gap = gap;
-            largest_index = index;
-        }
-    }
-    (largest_index + 1) % points.len()
-}
-
-fn clusters(points: &[Point]) -> heapless::Vec<(usize, usize), MAX_CLUSTERS> {
-    let mut result = heapless::Vec::new();
-    if points.is_empty() {
-        return result;
-    }
-
-    let mut start = 0;
-    for index in 1..points.len() {
-        let previous = points[index - 1];
-        let current = points[index];
-        let jump_limit = max_length(
-            units::Length::new(0.15),
-            max_length(previous.range, current.range) * units::Scalar::new(0.10),
-        );
-        if bins_angle(bin_gap(previous.bin, current.bin)) > MAX_CLUSTER_GAP
-            || (previous.range - current.range).abs() > jump_limit
-        {
-            if index - start >= MIN_CLUSTER_POINTS {
-                let _ = result.push((start, index));
-            }
-            start = index;
-        }
-    }
-    if points.len() - start >= MIN_CLUSTER_POINTS {
-        let _ = result.push((start, points.len()));
-    }
-    result
-}
-
-fn is_extremum(points: &[Point], index: usize, start: usize, end: usize, maximum: bool) -> bool {
-    if index < start + EXTREMUM_MARGIN || index + EXTREMUM_MARGIN >= end {
+/// A structure starts at a point whose previous bin is empty or more than
+/// [`EDGE_JUMP`] farther away.
+///
+/// Only bins `1..=BIN_COUNT` may start a structure. Every start in the
+/// revolution is then visited exactly once, and a structure crossing the
+/// 0-degree seam continues into the overlap bins.
+fn is_structure_start(points: &[Point], index: usize) -> bool {
+    let point = points[index];
+    if point.bin == 0 || point.bin > BIN_COUNT {
         return false;
     }
-    let point = points[index].range;
-    let previous = points[index - 1].range;
-    let next = points[index + 1].range;
-    let at_extremum = if maximum {
-        point >= previous && point >= next
+    match index.checked_sub(1).map(|previous| points[previous]) {
+        Some(previous) if previous.bin + 1 == point.bin => previous.range - point.range > EDGE_JUMP,
+        _ => true,
+    }
+}
+
+/// Index of the last point before an empty bin or a range jump.
+fn structure_end(points: &[Point], start: usize) -> usize {
+    let mut end = start;
+    while let Some(next) = points.get(end + 1) {
+        let current = points[end];
+        if next.bin != current.bin + 1 || (next.range - current.range).abs() > EDGE_JUMP {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
+fn observe_structure(run: &[Point]) -> Option<CornerObservation> {
+    if run.len() < 2 * MIN_WALL_POINTS + 1 {
+        return None;
+    }
+    let first = run[0];
+    let last = run[run.len() - 1];
+    let apex = apex_index(run)?;
+
+    // The apex sample straddles both walls, so it is left out of both fits.
+    let first_wall = line_fit(&run[..apex])?;
+    let second_wall = line_fit(&run[apex + 1..])?;
+    if first_wall.rms > MAX_RMS || second_wall.rms > MAX_RMS {
+        return None;
+    }
+    let (vertex_x, vertex_y) = line_intersection(&first_wall, &second_wall)?;
+
+    let first_leg = distance(first.x - vertex_x, first.y - vertex_y);
+    let second_leg = distance(last.x - vertex_x, last.y - vertex_y);
+    let (shorter, longer) = if first_leg < second_leg {
+        (first_leg, second_leg)
     } else {
-        point <= previous && point <= next
+        (second_leg, first_leg)
     };
-    if !at_extremum {
-        return false;
+    if longer <= ZERO_LENGTH || shorter < longer * MIN_LEG_RATIO {
+        return None;
     }
 
-    let before = points[index - EXTREMUM_MARGIN].range;
-    let after = points[index + EXTREMUM_MARGIN].range;
-    if maximum {
-        point - before >= EXTREMUM_DEPTH && point - after >= EXTREMUM_DEPTH
+    // Ranges falling towards the apex mean the robot sees the outside of the
+    // triangle; rising ranges mean it is looking into it.
+    let kind = if run[apex].range < first.range {
+        CornerKind::Southwest
     } else {
-        before - point >= EXTREMUM_DEPTH && after - point >= EXTREMUM_DEPTH
-    }
-}
-
-fn verify_seed(
-    points: &[Point],
-    cluster_start: usize,
-    cluster_end: usize,
-    seed: usize,
-    kind: CornerKind,
-) -> Option<Candidate> {
-    let left = fit_wall(points, cluster_start, seed, seed, -1)?;
-    let right = fit_wall(points, seed + 1, cluster_end, seed, 1)?;
-    if left.line.rms > MAX_RMS || right.line.rms > MAX_RMS {
-        return None;
-    }
-
-    let (vertex_x, vertex_y) = line_intersection(&left.line, &right.line)?;
-    let seed_point = points[seed];
-    if distance(vertex_x - seed_point.x, vertex_y - seed_point.y) > VERTEX_SNAP {
-        return None;
-    }
-
-    let ray_left = directed_ray(&left.points, vertex_x, vertex_y)?;
-    let ray_right = directed_ray(&right.points, vertex_x, vertex_y)?;
-    let interior = super::wrap_pi(ray_right.angle - ray_left.angle).abs();
-    let bisector_delta = super::wrap_pi(ray_right.angle - ray_left.angle) / TWO;
-    if bisector_delta.cos().abs() <= units::Scalar::new(1.0e-6) {
-        return None;
-    }
-    let bisector = super::wrap_2pi(ray_left.angle + bisector_delta);
-
-    let outside_wedge =
-        (ROBOT_X - vertex_x) * bisector.cos() + (ROBOT_Y - vertex_y) * bisector.sin();
+        CornerKind::Northeast
+    };
     let nominal = match kind {
         CornerKind::Southwest => SW_INTERIOR_ANGLE,
         CornerKind::Northeast => NE_INTERIOR_ANGLE,
     };
+
+    let first_ray = direction(first_wall.x - vertex_x, first_wall.y - vertex_y)?;
+    let second_ray = direction(second_wall.x - vertex_x, second_wall.y - vertex_y)?;
+    let opening = wrap_pi(second_ray - first_ray);
+    let interior = opening.abs();
     let angle_error = (interior - nominal).abs();
-    let convexity_ok = match kind {
-        CornerKind::Southwest => outside_wedge < ZERO_LENGTH,
-        CornerKind::Northeast => outside_wedge > ZERO_LENGTH,
-    };
-    if angle_error >= ANGLE_TOL || !convexity_ok {
+    if angle_error > ANGLE_TOL {
         return None;
     }
 
     let range = distance(vertex_x, vertex_y);
-    if range <= ZERO_LENGTH {
-        return None;
-    }
-    let angle_score = ONE - angle_error / ANGLE_TOL;
-    let rms_score = ONE - max_length(left.line.rms, right.line.rms) / MAX_RMS;
-    let wall_score = min_scalar(
-        (left.path_length + right.path_length) / units::Length::new(0.5),
-        ONE,
-    );
-    let score = scalar_product(units::Scalar::new(0.40), wall_score)
-        + scalar_product(units::Scalar::new(0.35), angle_score)
-        + scalar_product(units::Scalar::new(0.25), rms_score);
+    let bearing = direction(vertex_x, vertex_y)?;
+    // A perfect 120-degree isosceles triangle scores 1.
+    let score = (shorter * (ONE - angle_error / ANGLE_TOL)) / longer;
 
-    Some(Candidate {
-        observation: CornerObservation {
-            kind,
-            vertex: (vertex_x, vertex_y),
-            range_m: range,
-            bearing_rad: angle_from_atan2(vertex_y / range, vertex_x / range),
-            interior_angle_rad: interior,
-            bisector_rad: bisector,
-            score: min_scalar(max_scalar(score, units::Scalar::new(0.0)), ONE),
-        },
+    Some(CornerObservation {
+        kind,
+        vertex: (vertex_x, vertex_y),
+        range_m: range,
+        bearing_rad: bearing,
+        interior_angle_rad: interior,
+        bisector_rad: wrap_2pi(first_ray + opening / TWO),
+        score,
     })
 }
 
-fn fit_wall(
-    points: &[Point],
-    start: usize,
-    end: usize,
-    seed: usize,
-    direction: isize,
-) -> Option<WallFit> {
-    let mut selected = heapless::Vec::<Point, MAX_WALL_POINTS>::new();
-    let mut path_length = ZERO_LENGTH;
-    let mut previous = points[seed];
-    let mut index = seed as isize + direction;
+/// Find where the chord angle from the first point stops holding steady and
+/// starts sweeping.
+///
+/// That is the point farthest from the base of the triangle, the chord from
+/// the first to the last point. A chord of length `c` at angle `a` sits
+/// `c * |sin(base - a)|` from the base.
+fn apex_index(run: &[Point]) -> Option<usize> {
+    let first = run[0];
+    let last = run[run.len() - 1];
+    let base = direction(last.x - first.x, last.y - first.y)?;
 
-    while index >= start as isize && index < end as isize {
-        let current = points[index as usize];
-        let jump_limit = max_length(
-            units::Length::new(0.15),
-            max_length(previous.range, current.range) * units::Scalar::new(0.10),
-        );
-        let angular_gap = if direction < 0 {
-            bin_gap(current.bin, previous.bin)
-        } else {
-            bin_gap(previous.bin, current.bin)
+    let mut apex = None;
+    let mut height = ZERO_LENGTH;
+    for (index, point) in run.iter().enumerate().skip(1) {
+        let dx = point.x - first.x;
+        let dy = point.y - first.y;
+        let Some(angle) = direction(dx, dy) else {
+            continue;
         };
-        if bins_angle(angular_gap) > MAX_CLUSTER_GAP
-            || (previous.range - current.range).abs() > jump_limit
-        {
-            break;
+        let offset = (distance(dx, dy) * (base - angle).sin()).abs();
+        if offset > height {
+            height = offset;
+            apex = Some(index);
         }
-        path_length += distance(current.x - previous.x, current.y - previous.y);
-        if path_length > WALL_FIT_LEN {
-            break;
-        }
-        if path_length >= WALL_FIT_MIN_PATH {
-            if selected.push(current).is_err() {
-                break;
-            }
-        }
-        previous = current;
-        index += direction;
     }
-
-    if selected.len() < MIN_WALL_POINTS {
-        return None;
-    }
-    let line = line_fit(&selected)?;
-    Some(WallFit {
-        line,
-        points: selected,
-        path_length,
-    })
+    apex
 }
 
-fn line_fit(points: &[Point]) -> Option<LineFit> {
+/// Total-least-squares line through `points`.
+fn line_fit(points: &[Point]) -> Option<Line> {
     if points.len() < MIN_WALL_POINTS {
         return None;
     }
-    let mut count = units::Scalar::new(0.0);
-    for _ in points {
-        count += units::Scalar::new(1.0);
-    }
-    let mean_x = points
-        .iter()
-        .map(|point| point.x)
-        .fold(ZERO_LENGTH, |sum, value| sum + value)
-        / count;
-    let mean_y = points
-        .iter()
-        .map(|point| point.y)
-        .fold(ZERO_LENGTH, |sum, value| sum + value)
-        / count;
+    let count = units::Scalar::new(points.len() as f32);
+    let mean_x = points.iter().fold(ZERO_LENGTH, |sum, point| sum + point.x) / count;
+    let mean_y = points.iter().fold(ZERO_LENGTH, |sum, point| sum + point.y) / count;
     let mut xx = units::Area::new(0.0);
     let mut xy = units::Area::new(0.0);
     let mut yy = units::Area::new(0.0);
@@ -372,117 +252,47 @@ fn line_fit(points: &[Point]) -> Option<LineFit> {
     if xx + yy <= units::Area::new(0.0) {
         return None;
     }
-    let theta = (xy + xy).into_scalar().atan2((xx - yy).into_scalar());
-    let direction = Direction {
-        angle: angle_from_scalar(theta),
-    };
+    let angle = angle_from_scalar((xy + xy).into_scalar().atan2((xx - yy).into_scalar()) / TWO);
     let mut residual = units::Area::new(0.0);
     for point in points {
-        let dx = point.x - mean_x;
-        let dy = point.y - mean_y;
-        let cross = dx * direction.angle.sin() - dy * direction.angle.cos();
+        let cross = (point.x - mean_x) * angle.sin() - (point.y - mean_y) * angle.cos();
         residual += cross * cross;
     }
-    let rms = (residual / count).sqrt();
-    Some(LineFit {
-        centroid: Point {
-            x: mean_x,
-            y: mean_y,
-            range: ZERO_LENGTH,
-            bin: 0,
-        },
-        direction,
-        rms,
+    Some(Line {
+        x: mean_x,
+        y: mean_y,
+        angle,
+        rms: (residual / count).sqrt(),
     })
 }
 
-fn line_intersection(first: &LineFit, second: &LineFit) -> Option<(units::Length, units::Length)> {
-    let direction_cross = (second.direction.angle - first.direction.angle).sin();
+fn line_intersection(first: &Line, second: &Line) -> Option<(units::Length, units::Length)> {
+    let direction_cross = (second.angle - first.angle).sin();
     if direction_cross.abs() < units::Scalar::new(0.1) {
         return None;
     }
-    let between_x = second.centroid.x - first.centroid.x;
-    let between_y = second.centroid.y - first.centroid.y;
-    let between_cross =
-        between_x * second.direction.angle.sin() - between_y * second.direction.angle.cos();
+    let between_x = second.x - first.x;
+    let between_y = second.y - first.y;
+    let between_cross = between_x * second.angle.sin() - between_y * second.angle.cos();
     let distance_along_first = between_cross / direction_cross;
     Some((
-        first.centroid.x + distance_along_first * first.direction.angle.cos(),
-        first.centroid.y + distance_along_first * first.direction.angle.sin(),
+        first.x + distance_along_first * first.angle.cos(),
+        first.y + distance_along_first * first.angle.sin(),
     ))
 }
 
-fn directed_ray(
-    points: &[Point],
-    vertex_x: units::Length,
-    vertex_y: units::Length,
-) -> Option<Direction> {
-    let mut farthest = None;
-    let mut farthest_distance = units::Area::new(0.0);
-    for point in points {
-        let dx = point.x - vertex_x;
-        let dy = point.y - vertex_y;
-        let squared = dx * dx + dy * dy;
-        if squared > farthest_distance {
-            farthest_distance = squared;
-            farthest = Some((dx, dy));
-        }
-    }
-    let (x, y) = farthest?;
+/// Direction of the vector `(x, y)`, or `None` for a zero-length vector.
+fn direction(x: units::Length, y: units::Length) -> Option<units::PlaneAngle> {
     let length = distance(x, y);
-    (length > ZERO_LENGTH).then_some(Direction {
-        angle: angle_from_atan2(y / length, x / length),
-    })
-}
-
-fn replace_if_better(slot: &mut Option<Candidate>, candidate: Candidate) {
-    let should_replace = slot
-        .as_ref()
-        .map(|current| candidate.observation.score > current.observation.score)
-        .unwrap_or(true);
-    if should_replace {
-        *slot = Some(candidate);
-    }
-}
-
-fn bin_gap(first: usize, second: usize) -> usize {
-    (second + super::BIN_COUNT - first) % super::BIN_COUNT
-}
-
-fn bins_angle(count: usize) -> units::PlaneAngle {
-    let mut result = units::PlaneAngle::new(0.0);
-    for _ in 0..count {
-        result += ONE_DEGREE;
-    }
-    result
+    (length > ZERO_LENGTH).then(|| angle_from_scalar((y / length).atan2(x / length)))
 }
 
 fn distance(x: units::Length, y: units::Length) -> units::Length {
     (x * x + y * y).sqrt()
 }
 
-fn scalar_product(first: units::Scalar, second: units::Scalar) -> units::Scalar {
-    (units::Length::new(1.0) * first * second) / units::Length::new(1.0)
-}
-
-fn angle_from_atan2(y: units::Scalar, x: units::Scalar) -> units::PlaneAngle {
-    units::PlaneAngle::new(1.0) * y.atan2(x)
-}
-
 fn angle_from_scalar(value: units::Scalar) -> units::PlaneAngle {
     units::PlaneAngle::new(1.0) * value
-}
-
-fn max_length(first: units::Length, second: units::Length) -> units::Length {
-    if first > second { first } else { second }
-}
-
-fn max_scalar(first: units::Scalar, second: units::Scalar) -> units::Scalar {
-    if first > second { first } else { second }
-}
-
-fn min_scalar(first: units::Scalar, second: units::Scalar) -> units::Scalar {
-    if first < second { first } else { second }
 }
 
 trait AreaScalar {

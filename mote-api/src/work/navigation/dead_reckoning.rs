@@ -158,13 +158,31 @@ impl DeadReckoning {
     }
 }
 
+/// Stationary when the specific-force magnitude matches gravity and the body
+/// rotation rate is small. Using vector norms (rather than per-axis limits)
+/// keeps a slightly tilted or biased accelerometer eligible for ZUPT and bias
+/// estimation.
 fn is_stationary(imu: &router::Imu) -> bool {
-    (imu.accel.z - GRAVITY).abs() <= GRAVITY_TOLERANCE
-        && imu.accel.x.abs() <= GRAVITY_TOLERANCE
-        && imu.accel.y.abs() <= GRAVITY_TOLERANCE
-        && imu.gyro.x.abs() <= STATIONARY_GYRO_LIMIT
-        && imu.gyro.y.abs() <= STATIONARY_GYRO_LIMIT
-        && imu.gyro.z.abs() <= STATIONARY_GYRO_LIMIT
+    const ONE_ACCEL: units::Acceleration = units::Acceleration::new(1.0);
+    const ONE_RATE: units::AngularVelocity = units::AngularVelocity::new(1.0);
+
+    let accel_norm = ONE_ACCEL
+        * norm(
+            imu.accel.x / ONE_ACCEL,
+            imu.accel.y / ONE_ACCEL,
+            imu.accel.z / ONE_ACCEL,
+        );
+    let gyro_norm = ONE_RATE
+        * norm(
+            imu.gyro.x / ONE_RATE,
+            imu.gyro.y / ONE_RATE,
+            imu.gyro.z / ONE_RATE,
+        );
+    (accel_norm - GRAVITY).abs() <= GRAVITY_TOLERANCE && gyro_norm < STATIONARY_GYRO_LIMIT
+}
+
+fn norm(x: units::Scalar, y: units::Scalar, z: units::Scalar) -> units::Scalar {
+    (x * x + y * y + z * z).sqrt()
 }
 
 fn should_emit(last_output: Option<units::Time>, timestamp: units::Time) -> bool {

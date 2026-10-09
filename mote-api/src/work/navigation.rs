@@ -21,13 +21,16 @@ pub const MS_PER_S: units::Scalar = units::Scalar::new(1_000.0);
 /// Mean earth radius, retained for the eventual frame-conversion implementation.
 pub const EARTH_RADIUS_M: units::Length = units::Length::new(6_371_000.0);
 
-/// Interior angle of the southwest reference corner.
+/// Interior angle of the southwest reference structure.
 pub const SW_INTERIOR_ANGLE: units::PlaneAngle =
     units::PlaneAngle::new(2.0 * core::f32::consts::PI / 3.0);
 
-/// Interior angle of the northeast reference corner.
+/// Interior angle of the northeast reference structure.
+///
+/// Both structures are 120-degree isosceles triangles; the robot sees the
+/// northeast one from its concave side.
 pub const NE_INTERIOR_ANGLE: units::PlaneAngle =
-    units::PlaneAngle::new(core::f32::consts::PI / 3.0);
+    units::PlaneAngle::new(2.0 * core::f32::consts::PI / 3.0);
 
 /// C1: lidar angle zero is aligned with the robot's forward axis.
 pub const LIDAR_ZERO_IS_FORWARD: bool = true;
@@ -41,9 +44,6 @@ pub const HEADING_IS_COMPASS: bool = true;
 /// C2: local north is aligned with true north in the flat-earth frame.
 pub const LOCAL_NORTH_IS_TRUE_NORTH: bool = true;
 
-/// C3: both corner bisectors point from the northeast reference toward the southwest reference.
-pub const CORNER_BISECTOR_POINTS_NE_TO_SW: bool = true;
-
 /// C5: the gyro z-axis reports positive angular velocity for counter-clockwise yaw.
 pub const GYRO_Z_CCW_POSITIVE: bool = true;
 
@@ -53,54 +53,52 @@ pub const MAX_DT: units::Time = units::Time::new(100.0);
 /// Minimum interval between emitted dead-reckoning positions.
 pub const DR_OUTPUT_PERIOD_MS: units::Time = units::Time::new(100.0);
 
-/// C3: angular offset from the southwest-to-northeast baseline to a corner bisector.
-pub const CORNER_BISECTOR_OFFSET: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI);
-
 /// Minimum accepted lidar return range.
 pub const MIN_RANGE: units::Length = units::Length::new(0.05);
 
 /// Maximum accepted lidar return range.
 pub const MAX_RANGE: units::Length = units::Length::new(6.0);
 
-/// Minimum path distance from a corner seed used for wall fitting.
-pub const WALL_FIT_MIN_PATH: units::Length = units::Length::new(0.03);
+/// Range jump between adjacent bins that marks the edge of a reference structure.
+///
+/// The structures stand at least 0.25 m in front of anything behind them; the
+/// threshold sits below that to tolerate range noise, and well above the
+/// bin-to-bin range change along a wall.
+pub const EDGE_JUMP: units::Length = units::Length::new(0.2);
 
-/// Maximum path distance from a corner seed used for wall fitting.
-pub const WALL_FIT_LEN: units::Length = units::Length::new(0.35);
+/// Smallest accepted ratio of the shorter to the longer leg of a structure.
+pub const MIN_LEG_RATIO: units::Scalar = units::Scalar::new(0.7);
 
-/// Maximum angular gap allowed inside a continuous return cluster.
-pub const MAX_CLUSTER_GAP: units::PlaneAngle =
-    units::PlaneAngle::new(6.0 * core::f32::consts::PI / 180.0);
-
-/// Number of bins on either side of a seed used to establish extremum depth.
-pub const EXTREMUM_MARGIN: usize = 6;
-
-/// Minimum range difference from the extremum to the margin samples.
-pub const EXTREMUM_DEPTH: units::Length = units::Length::new(0.02);
-
-/// Maximum distance by which a fitted vertex may move from its seed.
-pub const VERTEX_SNAP: units::Length = units::Length::new(0.06);
-
-/// Maximum number of points exposed by one binned revolution.
-pub const REVOLUTION_POINT_CAPACITY: usize = BIN_COUNT;
+/// Maximum number of points exposed by one binned revolution, including overlap bins.
+pub const REVOLUTION_POINT_CAPACITY: usize = EXTENDED_BIN_COUNT;
 
 /// Largest acceptable total-least-squares wall-fit residual.
 pub const MAX_RMS: units::Length = units::Length::new(0.02);
 
-/// Maximum deviation from a corner's nominal interior angle.
+/// Maximum deviation from a structure's nominal interior angle.
 pub const ANGLE_TOL: units::PlaneAngle =
-    units::PlaneAngle::new(10.0 * core::f32::consts::PI / 180.0);
-
-/// Minimum detector score for accepting a corner candidate.
-pub const MIN_SCORE: units::Scalar = units::Scalar::new(0.5);
+    units::PlaneAngle::new(15.0 * core::f32::consts::PI / 180.0);
 
 /// Number of one-degree bins used to represent a lidar revolution.
 pub const BIN_COUNT: usize = 360;
+
+/// Number of bins past 360 degrees that repeat the start of the revolution.
+///
+/// A reference structure crossing the 0-degree seam is then contiguous in
+/// the extended bins. A structure with 0.2 m legs subtends roughly 40 degrees
+/// at half a metre, so a quarter revolution covers it.
+pub const OVERLAP_BIN_COUNT: usize = 90;
+
+/// Total number of bins stored per revolution, including the overlap.
+pub const EXTENDED_BIN_COUNT: usize = BIN_COUNT + OVERLAP_BIN_COUNT;
 
 /// Minimum number of populated angular bins for a complete revolution.
 pub const MIN_BINS: u16 = 150;
 
 /// Maximum disagreement between position fixes from the two corners.
+///
+/// Both fixes share the baseline heading, so this bounds the difference between
+/// the measured and expected vertex separation.
 pub const MAX_FIX_DISAGREEMENT: units::Length = units::Length::new(0.05);
 
 /// Maximum allowed position jump when fusing a fix with dead reckoning.
@@ -108,6 +106,9 @@ pub const MAX_JUMP: units::Length = units::Length::new(0.5);
 
 const MAX_FINITE: units::Scalar = units::Scalar::new(core::f32::MAX);
 const MIN_FINITE: units::Scalar = units::Scalar::new(-core::f32::MAX);
+
+const ONE_DEGREE: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI / 180.0);
+const HALF_BIN: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI / 360.0);
 
 pub(crate) fn is_finite_scalar(value: units::Scalar) -> bool {
     value >= MIN_FINITE && value <= MAX_FINITE
@@ -126,8 +127,11 @@ pub(crate) fn is_finite_time(value: units::Time) -> bool {
 }
 
 /// A lidar revolution accumulated into uniformly spaced angle bins.
+///
+/// Bins `BIN_COUNT..EXTENDED_BIN_COUNT` mirror bins `0..OVERLAP_BIN_COUNT`, so
+/// structures crossing the 0-degree seam can be detected without reordering.
 pub struct Revolution {
-    range_m: [units::Length; BIN_COUNT],
+    range_m: [units::Length; EXTENDED_BIN_COUNT],
     last_angle: units::PlaneAngle,
     filled: u16,
     start_timestamp: units::Time,
@@ -136,7 +140,7 @@ pub struct Revolution {
 impl Revolution {
     fn new(start_timestamp: units::Time) -> Self {
         Self {
-            range_m: [units::Length::new(0.0); BIN_COUNT],
+            range_m: [units::Length::new(0.0); EXTENDED_BIN_COUNT],
             last_angle: units::PlaneAngle::new(0.0),
             filled: 0,
             start_timestamp,
@@ -164,16 +168,19 @@ impl Revolution {
         let angle = wrap_2pi(angle);
         let bin = angle_bin(angle);
         let previous = self.range_m[bin];
-        if previous == units::Length::new(0.0) {
+        if previous <= units::Length::new(0.0) {
             self.filled += 1;
             self.range_m[bin] = distance;
         } else if distance < previous {
             self.range_m[bin] = distance;
         }
+        if bin < OVERLAP_BIN_COUNT {
+            self.range_m[bin + BIN_COUNT] = self.range_m[bin];
+        }
         self.last_angle = angle;
     }
 
-    /// Number of populated bins in this revolution.
+    /// Number of populated bins in this revolution, excluding overlap bins.
     pub const fn filled_bins(&self) -> u16 {
         self.filled
     }
@@ -184,6 +191,10 @@ impl Revolution {
     }
 
     /// Return the populated bins as robot-frame points in increasing lidar-angle order.
+    ///
+    /// The sequence continues through the overlap bins, whose indices are
+    /// `BIN_COUNT` or greater and repeat the points of the first
+    /// [`OVERLAP_BIN_COUNT`] bins.
     pub fn points(&self) -> RevolutionPoints<'_> {
         RevolutionPoints {
             revolution: self,
@@ -202,15 +213,15 @@ impl Iterator for RevolutionPoints<'_> {
     type Item = (units::Length, units::Length, units::Length, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.next_bin < BIN_COUNT {
+        while self.next_bin < EXTENDED_BIN_COUNT {
             let bin = self.next_bin;
             self.next_bin += 1;
             let range = self.revolution.range_m[bin];
-            if range == units::Length::new(0.0) {
+            if range <= units::Length::new(0.0) {
                 continue;
             }
 
-            let angle = bin_angle(bin);
+            let angle = bin_angle(bin % BIN_COUNT);
             let (x, y) = lidar_to_robot(angle, range);
             return Some((x, y, range, bin));
         }
@@ -232,15 +243,8 @@ fn angle_bin(angle: units::PlaneAngle) -> usize {
 }
 
 fn bin_angle(bin: usize) -> units::PlaneAngle {
-    let mut angle = units::PlaneAngle::new(0.0);
-    for _ in 0..bin {
-        angle += ONE_DEGREE;
-    }
-    angle
+    ONE_DEGREE * units::Scalar::new(bin as f32)
 }
-
-const ONE_DEGREE: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI / 180.0);
-const HALF_BIN: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI / 360.0);
 
 /// The result of processing one accepted lidar revolution.
 pub struct NavigationReport {
@@ -366,7 +370,11 @@ impl Context {
         reference_frame: &router::ReferenceFrame,
     ) -> NavigationReport {
         let corners = detect_corners(revolution);
-        let pose = fix_from_corners(reference_frame, &corners)
+        let prior_heading = self
+            .dead_reckoning
+            .as_ref()
+            .map(|dead_reckoning| dead_reckoning.pose().heading);
+        let pose = fix_from_corners(reference_frame, &corners, prior_heading)
             .and_then(|fix| self.accept_fix(fix, timestamp, reference_frame));
         NavigationReport {
             timestamp: revolution.start_timestamp,
