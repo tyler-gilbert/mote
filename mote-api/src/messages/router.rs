@@ -98,15 +98,34 @@ impl Default for Guidance {
     }
 }
 
-/// Position expressed as north/east offsets and a heading.
-#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq, Default)]
+/// Settings including the route and the reference frame.
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct Settings {
+    /// Reference frame for simulation
+    pub reference_frame: ReferenceFrame,
+    /// Route for the simulation
+    pub route: Route,
+}
+
+/// Global center and diagonal scale of the navigation reference frame.
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct ReferenceFrame {
-    /// Postion of the southwest reference point
-    pub southwest: Coordinate,
-    /// Position of the northeast reference point
-    pub northeast: Coordinate,
-    /// Lidar distance scale factor
-    pub scale: f32,
+    /// Center of the reference frame in global coordinates.
+    pub global_center: Coordinate,
+    /// Global SW-to-NE diagonal length; the diagonal bisects north and east.
+    pub global_diagonal: units::Length,
+    /// Local SW-to-NE diagonal length; the diagonal bisects north and east.
+    pub local_diagonal: units::Length,
+}
+
+impl Default for ReferenceFrame {
+    fn default() -> Self {
+        Self {
+            global_center: Coordinate::default(),
+            global_diagonal: units::Length::new(0.0),
+            local_diagonal: units::Length::new(0.0),
+        }
+    }
 }
 
 /// Position expressed as north/east offsets and a heading.
@@ -160,7 +179,7 @@ pub enum TelemetrySelection {
     /// Position Inputs
     PositionInputs,
     /// All
-    All
+    All,
 }
 
 impl TelemetrySelection {
@@ -171,22 +190,25 @@ impl TelemetrySelection {
 
     /// Send guidance telemtry
     pub fn is_send_guidance(&self) -> bool {
-        *self == Self::Guidance || *self == Self::RemoteControl|| *self == Self::All
+        *self == Self::Guidance || *self == Self::RemoteControl || *self == Self::All
     }
 
     /// Send nav telemtry
     pub fn is_send_navigation(&self) -> bool {
-        *self == Self::Navigation || *self == Self::RemoteControl|| *self == Self::All
+        *self == Self::Navigation || *self == Self::RemoteControl || *self == Self::All
     }
 
     /// Send imu telemtry
     pub fn is_send_imu(&self) -> bool {
-        *self == Self::Imu || *self == Self::RemoteControl || *self == Self::PositionInputs|| *self == Self::All
+        *self == Self::Imu
+            || *self == Self::RemoteControl
+            || *self == Self::PositionInputs
+            || *self == Self::All
     }
 
     /// Send lidar telemtry
     pub fn is_send_lidar(&self) -> bool {
-        *self == Self::Lidar || *self == Self::PositionInputs|| *self == Self::All
+        *self == Self::Lidar || *self == Self::PositionInputs || *self == Self::All
     }
 }
 

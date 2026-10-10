@@ -173,9 +173,13 @@ fn position_from_observation(
 }
 
 fn corner_position(frame: &router::ReferenceFrame, kind: CornerKind) -> LocalPosition {
+    let northeast = northeast_local(frame);
     match kind {
-        CornerKind::Southwest => LocalPosition::default(),
-        CornerKind::Northeast => northeast_local(frame),
+        CornerKind::Southwest => LocalPosition {
+            east: northeast.east * units::Scalar::new(-1.0),
+            north: northeast.north * units::Scalar::new(-1.0),
+        },
+        CornerKind::Northeast => northeast,
     }
 }
 

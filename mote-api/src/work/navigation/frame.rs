@@ -1,10 +1,7 @@
 //! Coordinate and frame-convention helpers for navigation.
 //!
-//! The navigation frame is a flat, scaled local tangent plane. Its origin is
-//! the southwest reference vertex, its x axis points east, and its y axis
-//! points north. The scale supplied by the router frame is world metres per
-//! lidar metre.
-
+//! The navigation frame is a flat local tangent plane centered on the global
+//! reference coordinate. Its x axis points east and its y axis points north.
 use crate::messages::router;
 
 /// Metres in one degree in the flat-earth frame used by navigation.
@@ -13,12 +10,12 @@ pub const METRES_PER_DEGREE: units::Scalar = units::Scalar::new(111_319.5);
 const TWO_PI: units::PlaneAngle = units::PlaneAngle::new(2.0 * core::f32::consts::PI);
 const PI: units::PlaneAngle = units::PlaneAngle::new(core::f32::consts::PI);
 
-/// Local tangent-plane position in lidar metres, with the SW vertex as origin.
+/// Local tangent-plane position in lidar metres, with the frame center as origin.
 #[derive(Clone, Copy)]
 pub struct LocalPosition {
-    /// Eastward offset from the SW vertex, in lidar metres.
+    /// Eastward offset from the frame center, in lidar metres.
     pub east: units::Length,
-    /// Northward offset from the SW vertex, in lidar metres.
+    /// Northward offset from the frame center, in lidar metres.
     pub north: units::Length,
 }
 
@@ -49,41 +46,71 @@ impl Default for LocalPose {
     }
 }
 
-/// Convert a global coordinate to local lidar metres relative to the SW vertex.
+/// Convert a global coordinate to local lidar metres relative to the frame center.
 pub fn to_local(frame: &router::ReferenceFrame, coordinate: &router::Coordinate) -> LocalPosition {
-    let latitude_delta =
-        degrees_as_scalar(coordinate.latitude) - degrees_as_scalar(frame.southwest.latitude);
-    let longitude_delta =
-        degrees_as_scalar(coordinate.longitude) - degrees_as_scalar(frame.southwest.longitude);
-    let scale = units::Scalar::from(frame.scale);
-
-    let north_world = units::Length::new(1.0) * latitude_delta * METRES_PER_DEGREE;
-    let east_world = units::Length::new(1.0) * longitude_delta * METRES_PER_DEGREE;
+    let (east_world, north_world) = world_offset(frame, coordinate);
+    let diagonal_scale = diagonal_scale(frame);
 
     LocalPosition {
-        east: east_world / scale,
-        north: north_world / scale,
+        east: east_world * diagonal_scale,
+        north: north_world * diagonal_scale,
     }
 }
 
 /// Convert a local lidar-metre position back to the global flat-earth frame.
 pub fn to_global(frame: &router::ReferenceFrame, local: LocalPosition) -> router::Coordinate {
-    let scale = units::Scalar::from(frame.scale);
+    let diagonal_scale = diagonal_scale(frame);
+    let (east_world, north_world) = if diagonal_scale > units::Scalar::new(0.0) {
+        (local.east / diagonal_scale, local.north / diagonal_scale)
+    } else {
+        (units::Length::new(0.0), units::Length::new(0.0))
+    };
     let metres_per_degree = units::Length::new(1.0) * METRES_PER_DEGREE;
-    let east_degrees = (local.east * scale) / metres_per_degree;
-    let north_degrees = (local.north * scale) / metres_per_degree;
+    let east_degrees = east_world / metres_per_degree;
+    let north_degrees = north_world / metres_per_degree;
 
     router::Coordinate {
         latitude: units::imperial::Degrees::new(1.0)
-            * (degrees_as_scalar(frame.southwest.latitude) + north_degrees),
+            * (degrees_as_scalar(frame.global_center.latitude) + north_degrees),
         longitude: units::imperial::Degrees::new(1.0)
-            * (degrees_as_scalar(frame.southwest.longitude) + east_degrees),
+            * (degrees_as_scalar(frame.global_center.longitude) + east_degrees),
     }
 }
 
-/// Return the NE vertex in local lidar metres relative to the SW vertex.
+fn world_offset(
+    frame: &router::ReferenceFrame,
+    coordinate: &router::Coordinate,
+) -> (units::Length, units::Length) {
+    let latitude_delta =
+        degrees_as_scalar(coordinate.latitude) - degrees_as_scalar(frame.global_center.latitude);
+    let longitude_delta =
+        degrees_as_scalar(coordinate.longitude) - degrees_as_scalar(frame.global_center.longitude);
+    let metres_per_degree = units::Length::new(1.0) * METRES_PER_DEGREE;
+
+    (
+        metres_per_degree * longitude_delta,
+        metres_per_degree * latitude_delta,
+    )
+}
+
+fn diagonal_scale(frame: &router::ReferenceFrame) -> units::Scalar {
+    if frame.global_diagonal > units::Length::new(0.0)
+        && frame.local_diagonal > units::Length::new(0.0)
+    {
+        frame.local_diagonal / frame.global_diagonal
+    } else {
+        units::Scalar::new(0.0)
+    }
+}
+
+/// Return the NE vertex offset from the frame center in local lidar metres.
 pub fn northeast_local(frame: &router::ReferenceFrame) -> LocalPosition {
-    to_local(frame, &frame.northeast)
+    let half_diagonal_component =
+        frame.local_diagonal * units::Scalar::new(0.5 * core::f32::consts::FRAC_1_SQRT_2);
+    LocalPosition {
+        east: half_diagonal_component,
+        north: half_diagonal_component,
+    }
 }
 
 /// Return the compass bearing from the SW vertex to the NE vertex.
