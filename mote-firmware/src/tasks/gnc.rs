@@ -35,6 +35,7 @@ impl Context {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::LidarScan(scan.clone()));
         }
         if let Some(reference_frame) = self.reference_frame.as_ref() {
+            return None;
             self.navigation_context.update(
                 router::get_timestamp(),
                 self.position.as_ref(),
@@ -144,7 +145,7 @@ impl Context {
                 None
             }
             router::Message::Imu(imu) => self.handle_imu(imu).await,
-            //router::Message::LidarScan(scan) => self.handle_lidar_scan(scan).await,
+            router::Message::LidarScan(scan) => self.handle_lidar_scan(scan).await,
             router::Message::Position(position) => {
                 self.position = Some(position);
                 None
