@@ -12,7 +12,7 @@ async fn gnc_task() {
     context.execute().await;
 }
 
-const IMU_SAMPLE_REPORT_DECIMATION_VALUE: u8 = 25;
+const SAMPLE_REPORT_DECIMATION_VALUE: u8 = 25;
 
 #[derive(Default)]
 struct Context {
@@ -25,25 +25,38 @@ struct Context {
     reference_frame: Option<router::ReferenceFrame>,
     telemetry_selection: router::TelemetrySelection,
     imu_sample_counter: u8,
+    lidar_scan_counter: u8,
     status: router::Status,
 }
 
 impl Context {
     async fn handle_lidar_scan(&mut self, scan: router::Scan) -> Option<router::Position> {
-        self.status.counters.lidar_scan += 1;
+        if self.lidar_scan_counter == SAMPLE_REPORT_DECIMATION_VALUE {
+            router::update_counter(
+                &mut self.status.counters.lidar_scan,
+                SAMPLE_REPORT_DECIMATION_VALUE as u32,
+            );
+            self.lidar_scan_counter = 0;
+        }
         if self.telemetry_selection.is_send_lidar() {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::LidarScan(scan.clone()));
         }
         if let Some(reference_frame) = self.reference_frame.as_ref() {
-            return None;
-            self.navigation_context.update(
+            let position = self.navigation_context.update(
                 router::get_timestamp(),
                 self.position.as_ref(),
                 Some(scan),
                 None,
                 reference_frame,
                 &mut self.status,
-            )
+            );
+            if position.is_some() {
+                router::update_counter(
+                    &mut self.status.counters.navigation_lidar_position_counter,
+                    SAMPLE_REPORT_DECIMATION_VALUE as u16,
+                );
+            }
+            position
         } else {
             None
         }
@@ -51,8 +64,11 @@ impl Context {
 
     async fn handle_imu(&mut self, imu: router::Imu) -> Option<router::Position> {
         self.imu_sample_counter += 1;
-        if self.imu_sample_counter == IMU_SAMPLE_REPORT_DECIMATION_VALUE {
-            self.status.counters.imu_sample += 1;
+        if self.imu_sample_counter == SAMPLE_REPORT_DECIMATION_VALUE {
+            router::update_counter(
+                &mut self.status.counters.imu_sample,
+                SAMPLE_REPORT_DECIMATION_VALUE as u32,
+            );
             self.imu_sample_counter = 0;
         }
         if self.telemetry_selection.is_send_imu() {

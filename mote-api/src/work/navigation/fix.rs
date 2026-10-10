@@ -112,6 +112,7 @@ fn two_corner_fix(
 ) -> Option<LocalPose> {
     let baseline = northeast_local(frame);
     if distance(baseline.east, baseline.north) <= ZERO_LENGTH {
+        defmt::info!("Reject for bad distance");
         return None;
     }
 
@@ -121,6 +122,7 @@ fn two_corner_fix(
     };
     let sw_to_ne_length = distance(sw_to_ne_robot.x, sw_to_ne_robot.y);
     if sw_to_ne_length <= ZERO_LENGTH {
+        defmt::info!("Reject for bad distance for SW/NE");
         return None;
     }
     let robot_bearing = angle_from_atan2(
@@ -138,6 +140,7 @@ fn two_corner_fix(
         southwest_position.north - northeast_position.north,
     );
     if disagreement > MAX_FIX_DISAGREEMENT {
+        defmt::info!("Max fix disagreement - distance {}", disagreement);
         return None;
     }
 

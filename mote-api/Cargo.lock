@@ -5049,6 +5049,7 @@ dependencies = [
  "heapless",
  "libm",
  "mdns",
+ "num-traits",
  "postcard",
  "rerun",
  "schemars",

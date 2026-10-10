@@ -259,6 +259,22 @@ pub struct StatusCounters {
     pub navigation_lidar_scan_fix: u16,
     /// lidar revolutions
     pub navigation_lidar_revolutions: u16,
+    /// number of sw corner detections
+    pub navigation_sw_corners: u16,
+    /// number of ne corner detections
+    pub navigation_ne_corners: u16,
+    /// position counter
+    pub navigation_lidar_position_counter: u16,
+    /// fix from corners
+    pub navigation_lidar_fix_from_corners: u16,
+    /// fix using a recent corner if needed
+    pub navigation_lidar_both_corners_with_recent: u16,
+}
+
+/// Update a counter allowing for overflow
+pub fn update_counter<T: num_traits::ops::overflowing::OverflowingAdd>(input: &mut T, rhs: T) {
+    let (updated_value, _) = input.overflowing_add(&rhs);
+    *input = updated_value;
 }
 
 /// Debug messages

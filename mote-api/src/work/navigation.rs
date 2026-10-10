@@ -101,6 +101,13 @@ pub const ANGLE_TOL: units::PlaneAngle =
 /// the measured and expected vertex separation.
 pub const MAX_FIX_DISAGREEMENT: units::Length = units::Length::new(0.05);
 
+/// How long a corner observation is retained for pairing with the other corner.
+///
+/// A single revolution does not always see both structures, so a fix may
+/// combine the latest southwest and northeast observations from different
+/// revolutions, provided neither is older than this.
+pub const CORNER_MEMORY: units::Time = units::Time::new(1.0);
+
 /// Maximum allowed position jump when fusing a fix with dead reckoning.
 pub const MAX_JUMP: units::Length = units::Length::new(0.5);
 
@@ -148,6 +155,8 @@ pub struct Context {
     discarded_points: u32,
     dead_reckoning: Option<dead_reckoning::DeadReckoning>,
     last_accepted_fix_timestamp: Option<units::Time>,
+    recent_southwest: Option<(units::Time, CornerObservation)>,
+    recent_northeast: Option<(units::Time, CornerObservation)>,
 }
 
 impl Context {
@@ -191,7 +200,6 @@ impl Context {
                 continue;
             }
 
-            continue;
             self.accepted_points += 1;
             let angle = wrap_2pi(point.angle);
             let wraps = self
@@ -202,28 +210,30 @@ impl Context {
                 })
                 .unwrap_or(false);
             if wraps {
-                status.counters.navigation_lidar_revolutions += 1;
-                status.set_log("Finished a revolution");
-                self.finish_revolution(timestamp, reference_frame);
+                router::update_counter(&mut status.counters.navigation_lidar_revolutions, 1);
+                self.finish_revolution(status, timestamp, reference_frame);
             }
 
             self.current_revolution
                 .get_or_insert_with(|| Revolution::new(timestamp))
                 .insert(angle, point.distance);
         }
-        return None;
 
         let fix_position = (self.accepted_revolutions > accepted_revolutions_before)
-            .then(|| self.reports.back().and_then(|report| report.pose.clone()))
+            .then(|| {
+                status.set_log("accepted revolutions");
+                self.reports.back().and_then(|report| report.pose.clone())
+            })
             .flatten();
         if fix_position.is_some() {
-            status.counters.navigation_lidar_scan_fix += 1;
+            router::update_counter(&mut status.counters.navigation_lidar_scan_fix, 1);
         }
         fix_position.or(dead_reckoning_position)
     }
 
     fn finish_revolution(
         &mut self,
+        status: &mut router::Status,
         timestamp: units::Time,
         reference_frame: &router::ReferenceFrame,
     ) {
@@ -237,7 +247,7 @@ impl Context {
         }
 
         self.accepted_revolutions += 1;
-        let report = self.process_revolution(&revolution, timestamp, reference_frame);
+        let report = self.process_revolution(status, &revolution, timestamp, reference_frame);
         if let Err(revolution) = self.completed.push_back(revolution) {
             let _ = self.completed.pop_front();
             let _ = self.completed.push_back(revolution);
@@ -250,23 +260,62 @@ impl Context {
 
     fn process_revolution(
         &mut self,
+        status: &mut router::Status,
         revolution: &Revolution,
         timestamp: units::Time,
         reference_frame: &router::ReferenceFrame,
     ) -> NavigationReport {
         let corners = detect_corners(revolution);
+        for corner in corners.iter() {
+            match &corner.kind {
+                CornerKind::Northeast => {
+                    router::update_counter(&mut status.counters.navigation_ne_corners, 1);
+                    self.recent_northeast = Some((timestamp, *corner));
+                }
+                CornerKind::Southwest => {
+                    router::update_counter(&mut status.counters.navigation_sw_corners, 1);
+                    self.recent_southwest = Some((timestamp, *corner));
+                }
+            }
+        }
+        let recent_corners = self.recent_corners(timestamp);
+        if recent_corners.len() == 2 {
+            router::update_counter(
+                &mut status.counters.navigation_lidar_both_corners_with_recent,
+                1,
+            );
+        }
         let prior_heading = self
             .dead_reckoning
             .as_ref()
             .map(|dead_reckoning| dead_reckoning.pose().heading);
-        let pose = fix_from_corners(reference_frame, &corners, prior_heading)
+        let pose = fix_from_corners(reference_frame, &recent_corners, prior_heading)
             .and_then(|fix| self.accept_fix(fix, timestamp, reference_frame));
+        if pose.is_some() {
+            router::update_counter(&mut status.counters.navigation_lidar_fix_from_corners, 1);
+        }
         NavigationReport {
             timestamp: revolution.start_timestamp(),
             filled_bins: revolution.filled_bins(),
             corners,
             pose,
         }
+    }
+
+    /// Latest observation of each corner seen within [`CORNER_MEMORY`] of `timestamp`.
+    ///
+    /// Expired observations are forgotten.
+    fn recent_corners(&mut self, timestamp: units::Time) -> heapless::Vec<CornerObservation, 2> {
+        let mut corners = heapless::Vec::new();
+        for recent in [&mut self.recent_southwest, &mut self.recent_northeast] {
+            match recent {
+                Some((seen, corner)) if timestamp - *seen <= CORNER_MEMORY => {
+                    let _ = corners.push(*corner);
+                }
+                _ => *recent = None,
+            }
+        }
+        corners
     }
 
     fn accept_fix(
