@@ -94,12 +94,11 @@ impl DeadReckoning {
         if !super::is_finite_time(elapsed) || elapsed <= ZERO_TIME {
             return None;
         }
-        let elapsed = if elapsed < super::MAX_DT {
+        let dt = if elapsed < super::MAX_DT {
             elapsed
         } else {
             super::MAX_DT
         };
-        let dt = elapsed / super::MS_PER_S;
 
         let stationary = is_stationary(&imu);
         if stationary {
@@ -190,7 +189,7 @@ fn should_emit(last_output: Option<units::Time>, timestamp: units::Time) -> bool
         return true;
     };
     super::is_finite_time(timestamp - last_output)
-        && timestamp - last_output >= super::DR_OUTPUT_PERIOD_MS
+        && timestamp - last_output >= super::DR_OUTPUT_PERIOD
 }
 
 fn low_pass<T>(previous: T, sample: T) -> T

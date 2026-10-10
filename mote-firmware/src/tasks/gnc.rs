@@ -12,6 +12,8 @@ async fn gnc_task() {
     context.execute().await;
 }
 
+const IMU_SAMPLE_REPORT_DECIMATION_VALUE: u8 = 25;
+
 #[derive(Default)]
 struct Context {
     guidance_context: mote_api::work::guidance::Context,
@@ -22,10 +24,13 @@ struct Context {
     position: Option<router::Position>,
     reference_frame: Option<router::ReferenceFrame>,
     telemetry_selection: router::TelemetrySelection,
+    imu_sample_counter: u8,
+    status: router::Status,
 }
 
 impl Context {
     async fn handle_lidar_scan(&mut self, scan: router::Scan) -> Option<router::Position> {
+        self.status.counters.lidar_scan += 1;
         if self.telemetry_selection.is_send_lidar() {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::LidarScan(scan.clone()));
         }
@@ -36,6 +41,7 @@ impl Context {
                 Some(scan),
                 None,
                 reference_frame,
+                &mut self.status,
             )
         } else {
             None
@@ -43,6 +49,11 @@ impl Context {
     }
 
     async fn handle_imu(&mut self, imu: router::Imu) -> Option<router::Position> {
+        self.imu_sample_counter += 1;
+        if self.imu_sample_counter == IMU_SAMPLE_REPORT_DECIMATION_VALUE {
+            self.status.counters.imu_sample += 1;
+            self.imu_sample_counter = 0;
+        }
         if self.telemetry_selection.is_send_imu() {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::Imu(imu.clone()));
         }
@@ -53,6 +64,7 @@ impl Context {
                 None,
                 Some(imu),
                 reference_frame,
+                &mut self.status,
             )
         } else {
             None
@@ -88,9 +100,11 @@ impl Context {
     async fn handle_update(&mut self) {
         let timestamp = router::get_timestamp();
         if let (Some(route), Some(position)) = (self.route.as_ref(), self.position.as_ref()) {
-            let guidance = self.guidance_context.update(timestamp, position, route);
+            let guidance = self
+                .guidance_context
+                .update(timestamp, position, route, &mut self.status);
             self.send_guidance(guidance.as_ref()).await;
-            if let Some(control) = self.control_context.update(timestamp, guidance) {
+            if let Some(control) = self.control_context.update(timestamp, guidance, &mut self.status) {
                 self.send_control(control.clone()).await;
                 self.send_motor_command(control.motor_drive).await;
             }
@@ -101,29 +115,45 @@ impl Context {
         let position = match message {
             router::Message::None => None,
             router::Message::EnableControlMode => {
+                defmt::info!("Received Enable motor control command");
+                self.status.set_log("Received Enable motor control command");
                 self.control_mode_enabled = true;
                 None
             }
             router::Message::DisableControlMode => {
+                defmt::info!("Received Disable motor control command");
+                self.status.set_log("Received Disable motor control command");
                 self.control_mode_enabled = false;
                 None
             }
             router::Message::TelemetrySelection(telemetry_selection) => {
+                defmt::info!("Received Telemetry Selection Command");
                 self.telemetry_selection = telemetry_selection;
                 None
             }
             router::Message::ReferenceFrame(reference_frame) => {
+                defmt::info!("Received reference frame");
+                self.status.set_log("Received reference frame");
+                self.status.reference_frame_hash = reference_frame.hash();
                 self.reference_frame = Some(reference_frame);
                 None
             }
             router::Message::MotorDrive(motor_drive) => {
+                defmt::info!("Received Motor Drive command");
                 self.send_motor_command(motor_drive).await;
                 None
             }
             router::Message::Imu(imu) => self.handle_imu(imu).await,
-            router::Message::LidarScan(scan) => self.handle_lidar_scan(scan).await,
+            //router::Message::LidarScan(scan) => self.handle_lidar_scan(scan).await,
             router::Message::Position(position) => {
                 self.position = Some(position);
+                None
+            }
+            router::Message::Route(route) => {
+                defmt::info!("Received route");
+                self.status.set_log("Received the route");
+                self.status.route_hash = router::hash_route(&route);
+                self.route = Some(route);
                 None
             }
             _ => None,
@@ -136,11 +166,19 @@ impl Context {
     }
 
     async fn execute(&mut self) {
+        let mut next_debug_hash = 0;
         loop {
+            let debug_hash = self.status.hash();
             let timeout_result = with_timeout(Duration::from_millis(50), router::TO_GNC_CHAN.receive()).await;
             match timeout_result {
                 Ok(message) => self.handle_message(message).await,
                 Err(_) => self.handle_update().await,
+            }
+            if next_debug_hash != debug_hash {
+                next_debug_hash = debug_hash;
+                let _ = router::TO_WIFI_CHAN.try_send(router::Message::Debug(self.status.clone()));
+                self.status.sequence += 1;
+                self.status.log = heapless::String::new();
             }
         }
     }

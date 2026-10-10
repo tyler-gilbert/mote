@@ -14,6 +14,7 @@ impl Context {
         _timestamp: units::Time,
         _position: &router::Position,
         _route: &router::Route,
+        _debug: &mut router::Status,
     ) -> Option<router::Guidance> {
         None
     }

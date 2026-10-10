@@ -53,10 +53,13 @@ async fn lidar_state_machine_task(r: RplidarC1Resources) {
     config.data_bits = DataBits::DataBits8;
     config.parity = Parity::ParityNone;
 
-    static TX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-    let tx_buf = &mut TX_BUF.init([0; 64])[..];
-    static RX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-    let rx_buf = &mut RX_BUF.init([0; 64])[..];
+    const TX_BUF_SIZE: usize = 64;
+    const RX_BUF_SIZE: usize = 1024;
+
+    static TX_BUF: StaticCell<[u8; TX_BUF_SIZE]> = StaticCell::new();
+    let tx_buf = &mut TX_BUF.init([0; TX_BUF_SIZE])[..];
+    static RX_BUF: StaticCell<[u8; RX_BUF_SIZE]> = StaticCell::new();
+    let rx_buf = &mut RX_BUF.init([0; RX_BUF_SIZE])[..];
     let uart = BufferedUart::new(r.uart, r.tx, r.rx, Irqs, tx_buf, rx_buf, config);
 
     let mut state = LidarState::Reset;
@@ -121,7 +124,6 @@ async fn lidar_state_machine_task(r: RplidarC1Resources) {
                 // ));
 
                 let timestamp = router::get_timestamp();
-
                 let point_cloud: router::PointCloud = point_buf[..valid_points]
                     .iter()
                     .filter_map(|&point| {

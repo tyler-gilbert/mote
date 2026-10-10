@@ -20,6 +20,7 @@ run_add_exec(
     working_directory = ".",
     log_level = run_log_level_passthrough(),
     env = cargo_env,
+    help = "Build the mote-firmware using cargo build",
 )
 
 run_add_exec(
@@ -51,6 +52,11 @@ run_add_exec(
         "DEFMT_LOG": "info",
     } | cargo_env,
     log_level = run_log_level_passthrough(),
+    help = """
+    Build and flash the mote-firmware to the device using the RPI debug probe.
+
+    This will also allow debugging using defmt::info!(), warn!() and error!().
+    """,
 )
 
 run_add_exec(
@@ -62,9 +68,14 @@ run_add_exec(
     ],
     working_directory = ".",
     env = {
-        "DEFMT_LOG": "info",
+        "DEFMT_LOG": "debug",
     } | cargo_env,
     log_level = run_log_level_passthrough(),
+    help = """
+    Build and flash the mote-firmware to the device using the RPI debug probe.
+
+    This will also allow debugging using defmt::debug!(), info!(), warn!() and error!().
+    """,
 )
 
 run_add_exec(
@@ -79,6 +90,13 @@ run_add_exec(
     } | cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
+    help = """
+    Build and flash the mote-firmware to the device using the RPI debug probe.
+
+    This will also allow debugging using defmt::trace!(), debug!(), info!(), warn!() and error!().
+
+    This will have a ridiculous level of output messages.
+    """,
 )
 
 run_add_exec(
@@ -89,6 +107,7 @@ run_add_exec(
     ],
     working_directory = ".",
     log_level = run_log_level_passthrough(),
+    help = "Format the code in the mote-firmware project",
 )
 
 run_add_exec(
@@ -104,6 +123,7 @@ run_add_exec(
     env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
+    help = "Run cargo clippy (linter) on the mote-firmware project",
 )
 
 run_add_exec(
@@ -116,17 +136,7 @@ run_add_exec(
     env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
-)
-
-run_add_exec(
-    "upgrade",
-    command = "cargo",
-    args = [
-        "update",
-    ],
-    env = cargo_env,
-    working_directory = ".",
-    log_level = run_log_level_passthrough(),
+    help = "Check that the formatting is correct.",
 )
 
 run_add_exec(
@@ -144,23 +154,7 @@ run_add_exec(
     env = cargo_env,
     working_directory = ".",
     log_level = run_log_level_passthrough(),
-)
-
-run_add_exec(
-    "ci",
-    command = "sh",
-    args = [
-        "-c",
-        """
-        set -e
-        cargo build --release
-        cargo fmt --check
-        cargo clippy --all-features -- -D warnings
-        """,
-    ],
-    env = cargo_env,
-    working_directory = ".",
-    log_level = run_log_level_passthrough(),
+    help = "Flashes the firmware on the Wifi chip",
 )
 
 run_add_exec(
@@ -209,6 +203,6 @@ run_add_exec(
     working_directory = ".",
     log_level = run_log_level_passthrough(),
     help = """
-    Show information about the connected probe and target device
+    Run the firmware currently installed on the target and attach to the debug output stream
     """,
 )

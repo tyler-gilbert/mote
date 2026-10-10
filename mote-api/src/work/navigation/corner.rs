@@ -12,13 +12,21 @@
 //! where that happens. Each wall is then fitted with a line, and the vertex is
 //! their intersection.
 //!
+//! Before searching for the apex, a run must span the number of bins a
+//! structure would at its distance. Each leg is [`STRUCTURE_LEG`] long, so the
+//! edges are `2 * STRUCTURE_LEG * sin(60 deg)` apart. That full width faces the
+//! robot from the arena centre; from the southeast and northwest corners the
+//! line of sight is [`MAX_OFF_AXIS_VIEW`] off the bisector and the structure
+//! looks narrowest.
+//!
 //! The detector works on the robot-frame points exposed by
 //! [`Revolution::points`], keeping the lidar's clockwise angle convention out
 //! of the geometry.
 
 use super::{
-    ANGLE_TOL, BIN_COUNT, EDGE_JUMP, MAX_RMS, MIN_LEG_RATIO, NE_INTERIOR_ANGLE,
-    REVOLUTION_POINT_CAPACITY, Revolution, SW_INTERIOR_ANGLE, is_finite_length, wrap_2pi, wrap_pi,
+    ANGLE_TOL, BIN_COUNT, EDGE_JUMP, MAX_OFF_AXIS_VIEW, MAX_RMS, MIN_LEG_RATIO, NE_INTERIOR_ANGLE,
+    ONE_DEGREE, REVOLUTION_POINT_CAPACITY, Revolution, STRUCTURE_LEG, SW_INTERIOR_ANGLE,
+    WIDTH_SLACK_POINTS, is_finite_length, wrap_2pi, wrap_pi,
 };
 
 const MIN_WALL_POINTS: usize = 4;
@@ -140,7 +148,7 @@ fn structure_end(points: &[Point], start: usize) -> usize {
 }
 
 fn observe_structure(run: &[Point]) -> Option<CornerObservation> {
-    if run.len() < 2 * MIN_WALL_POINTS + 1 {
+    if run.len() < 2 * MIN_WALL_POINTS + 1 || !has_structure_width(run) {
         return None;
     }
     let first = run[0];
@@ -166,13 +174,7 @@ fn observe_structure(run: &[Point]) -> Option<CornerObservation> {
         return None;
     }
 
-    // Ranges falling towards the apex mean the robot sees the outside of the
-    // triangle; rising ranges mean it is looking into it.
-    let kind = if run[apex].range < first.range {
-        CornerKind::Southwest
-    } else {
-        CornerKind::Northeast
-    };
+    let kind = structure_kind(first, last, (vertex_x, vertex_y));
     let nominal = match kind {
         CornerKind::Southwest => SW_INTERIOR_ANGLE,
         CornerKind::Northeast => NE_INTERIOR_ANGLE,
@@ -201,6 +203,69 @@ fn observe_structure(run: &[Point]) -> Option<CornerObservation> {
         bisector_rad: wrap_2pi(first_ray + opening / TWO),
         score,
     })
+}
+
+/// Classify a structure by which side of its edge-to-edge line the vertex is on.
+///
+/// The southwest vertex is the part of its structure closest to the arena
+/// centre, and the northeast vertex the part farthest from it. The robot is
+/// inside the arena, on the centre's side of the line through a structure's
+/// edges, so the southwest vertex lies on the robot's side of that line and
+/// the northeast vertex beyond it. Comparing ranges instead would break when
+/// one edge is nearer the robot than the vertex, as happens well off axis.
+fn structure_kind(
+    first: Point,
+    last: Point,
+    (vertex_x, vertex_y): (units::Length, units::Length),
+) -> CornerKind {
+    let base_x = last.x - first.x;
+    let base_y = last.y - first.y;
+    let side = |x: units::Length, y: units::Length| {
+        base_x * (y - first.y) - base_y * (x - first.x) > units::Area::new(0.0)
+    };
+    if side(vertex_x, vertex_y) == side(ZERO_LENGTH, ZERO_LENGTH) {
+        CornerKind::Southwest
+    } else {
+        CornerKind::Northeast
+    }
+}
+
+/// Whether the run spans as many bins as a reference structure would at its
+/// distance.
+///
+/// A width `w` whose edges are both at range `d` subtends `2 * asin(w / 2d)`,
+/// and every degree of that is one bin. Viewed off its bisector, one edge of
+/// a structure is nearer than the other, so the widest view is bounded with
+/// the nearer edge's range and the narrowest with the farther one.
+fn has_structure_width(run: &[Point]) -> bool {
+    let first = run[0].range;
+    let last = run[run.len() - 1].range;
+    let (nearer, farther) = if first < last {
+        (first, last)
+    } else {
+        (last, first)
+    };
+    let widest = STRUCTURE_LEG * (SW_INTERIOR_ANGLE / TWO).sin() * TWO;
+    let narrowest = widest * MAX_OFF_AXIS_VIEW.cos();
+    let most = expected_points(widest, nearer) + WIDTH_SLACK_POINTS;
+    let fewest = expected_points(narrowest, farther) - WIDTH_SLACK_POINTS;
+    let count = units::Scalar::new(run.len() as f32);
+    count >= fewest && count <= most
+}
+
+/// Number of one-degree bins spanned by a width whose edges are at `distance`.
+fn expected_points(width: units::Length, distance: units::Length) -> units::Scalar {
+    if distance <= ZERO_LENGTH {
+        return units::Scalar::new(BIN_COUNT as f32);
+    }
+    let half_sine = width / (distance * TWO);
+    // Edges nearer than half the width apart lie on opposite sides of the lidar.
+    if half_sine >= ONE {
+        return units::Scalar::new(180.0);
+    }
+    let half_cosine = (ONE - half_sine * half_sine).sqrt();
+    let half_angle = angle_from_scalar(half_sine.atan2(half_cosine));
+    half_angle * TWO / ONE_DEGREE
 }
 
 /// Find where the chord angle from the first point stops holding steady and

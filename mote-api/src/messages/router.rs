@@ -77,6 +77,26 @@ impl Default for Coordinate {
 /// A collection of points captured during a scan.
 pub type Route = heapless::vec::Vec<Coordinate, 100>;
 
+/// Maximum serialized route size in bytes.
+const MAX_HASH_SIZE: usize = 4 * 1024;
+
+/// Computes a portable 32-bit FNV-1a hash of a route.
+pub fn hash_route(route: &Route) -> u32 {
+    hash_serialized(route)
+}
+
+fn hash_serialized(value: &impl Serialize) -> u32 {
+    let mut buffer = [0; MAX_HASH_SIZE];
+    let bytes = postcard::to_slice(value, &mut buffer).expect("router data exceeds 4 KiB");
+    hash_bytes(bytes)
+}
+
+fn hash_bytes(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811c_9dc5, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
 /// Guidance describing a target heading and distance.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub struct Guidance {
@@ -116,6 +136,13 @@ pub struct ReferenceFrame {
     pub global_diagonal: units::Length,
     /// Local SW-to-NE diagonal length; the diagonal bisects north and east.
     pub local_diagonal: units::Length,
+}
+
+impl ReferenceFrame {
+    /// Computes a portable 32-bit FNV-1a hash of the reference frame.
+    pub fn hash(&self) -> u32 {
+        hash_serialized(self)
+    }
 }
 
 impl Default for ReferenceFrame {
@@ -221,6 +248,70 @@ pub struct MotorDrive {
     pub right: units::AngularVelocity,
 }
 
+/// Counters used for instrumenting the code
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq, Default)]
+pub struct StatusCounters {
+    /// number of lidar scans processed
+    pub lidar_scan: u32,
+    /// number of imu scans processed
+    pub imu_sample: u32,
+    /// lidar scan fix count
+    pub navigation_lidar_scan_fix: u16,
+    /// lidar revolutions
+    pub navigation_lidar_revolutions: u16,
+}
+
+/// Debug messages
+#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
+pub struct Status {
+    /// timestamp
+    timestamp: units::Time,
+    /// increments once for each message sent
+    pub sequence: u32,
+    /// Log Message
+    pub log: heapless::String<64>,
+    /// Debug counters
+    pub counters: StatusCounters,
+    /// Reference frame hash
+    pub reference_frame_hash: u32,
+    /// Route hash
+    pub route_hash: u32,
+}
+
+impl Status {
+    /// Computes a portable 32-bit FNV-1a hash of the reference frame.
+    pub fn hash(&self) -> u32 {
+        hash_serialized(self)
+    }
+}
+
+impl Default for Status {
+    fn default() -> Self {
+        Self {
+            timestamp: units::Time::new(0.0),
+            sequence: 0,
+            log: heapless::String::new(),
+            counters: StatusCounters::default(),
+            reference_frame_hash: 0,
+            route_hash: 0,
+        }
+    }
+}
+
+impl Status {
+    /// Sets a static log message
+    pub fn set_log(&mut self, message: &str) {
+        match heapless::String::<64>::try_from(message) {
+            Ok(value) => {
+                self.log = value;
+            }
+            Err(_) => {
+                self.log = heapless::String::<64>::try_from("Bad log message. Too long").unwrap();
+            }
+        };
+    }
+}
+
 /// A message published between mote components.
 #[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq)]
 pub enum Message {
@@ -248,6 +339,8 @@ pub enum Message {
     LidarScan(Scan),
     /// Guidance Route
     Route(Route),
+    /// Debug Message
+    Debug(Status),
 }
 
 impl alloc::fmt::Debug for Message {
@@ -275,5 +368,16 @@ impl Message {
     /// Wraps LiDAR scan data in a message.
     pub fn new_from_lidar_scan(value: Scan) -> Self {
         Self::LidarScan(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hash_bytes;
+
+    #[test]
+    fn fnv1a_matches_known_vectors() {
+        assert_eq!(hash_bytes(b""), 0x811c_9dc5);
+        assert_eq!(hash_bytes(b"hello"), 0x4f9f_2cab);
     }
 }

@@ -13,6 +13,7 @@ impl Context {
         &mut self,
         _timestamp: units::Time,
         _guidance_message: Option<router::Guidance>,
+        _debug: &mut router::Status,
     ) -> Option<router::Control> {
         None
     }
