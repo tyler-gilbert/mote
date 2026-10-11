@@ -186,6 +186,12 @@ impl Context {
         });
 
         let Some(scan) = scan else {
+            router::update_counter(
+                &mut status
+                    .counters
+                    .navigation_dead_reckoning_calcs_since_lidar_fix,
+                1,
+            );
             return dead_reckoning_position;
         };
 
@@ -227,6 +233,16 @@ impl Context {
             .flatten();
         if fix_position.is_some() {
             router::update_counter(&mut status.counters.navigation_lidar_scan_fix, 1);
+            status
+                .counters
+                .navigation_dead_reckoning_calcs_since_lidar_fix = 0;
+        } else {
+            router::update_counter(
+                &mut status
+                    .counters
+                    .navigation_dead_reckoning_calcs_since_lidar_fix,
+                1,
+            );
         }
         fix_position.or(dead_reckoning_position)
     }

@@ -269,6 +269,8 @@ pub struct StatusCounters {
     pub navigation_lidar_fix_from_corners: u16,
     /// fix using a recent corner if needed
     pub navigation_lidar_both_corners_with_recent: u16,
+    /// dead-reckoning steps since last lidar fix
+    pub navigation_dead_reckoning_calcs_since_lidar_fix: u16,
 }
 
 /// Update a counter allowing for overflow
