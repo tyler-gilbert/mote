@@ -93,7 +93,10 @@ fn world_offset(
     )
 }
 
-fn diagonal_scale(frame: &router::ReferenceFrame) -> units::Scalar {
+/// Local lidar metres per global metre, or zero when either diagonal is not positive.
+///
+/// The conversion is a uniform scale, so headings are the same in both frames.
+pub fn diagonal_scale(frame: &router::ReferenceFrame) -> units::Scalar {
     if frame.global_diagonal > units::Length::new(0.0)
         && frame.local_diagonal > units::Length::new(0.0)
     {

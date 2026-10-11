@@ -12,8 +12,8 @@ mod revolution;
 pub use corner::{CornerKind, CornerObservation, detect_corners};
 pub use fix::fix_from_corners;
 pub use frame::{
-    LocalPose, LocalPosition, METRES_PER_DEGREE, baseline_bearing, heading_to_degrees,
-    lidar_to_robot, northeast_local, to_global, to_local, wrap_2pi, wrap_pi,
+    LocalPose, LocalPosition, METRES_PER_DEGREE, baseline_bearing, diagonal_scale,
+    heading_to_degrees, lidar_to_robot, northeast_local, to_global, to_local, wrap_2pi, wrap_pi,
 };
 use revolution::ONE_DEGREE;
 pub use revolution::{

@@ -142,7 +142,13 @@ impl Context {
                 .guidance_context
                 .update(timestamp, position, route, &mut self.status);
             self.send_guidance(guidance.as_ref()).await;
-            if let Some(control) = self.control_context.update(timestamp, guidance, &mut self.status) {
+            // Without a reference frame control cannot convert guidance into wheel
+            // speeds; the default frame makes it command a stop.
+            let reference_frame = self.reference_frame.clone().unwrap_or_default();
+            if let Some(control) = self
+                .control_context
+                .update(timestamp, guidance, &reference_frame, &mut self.status)
+            {
                 self.send_control(control.clone()).await;
                 self.send_motor_command(router::ControlMode::Auto, control.motor_drive)
                     .await;
