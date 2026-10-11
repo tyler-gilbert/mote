@@ -185,57 +185,47 @@ pub struct Control {
     pub motor_drive: MotorDrive,
 }
 
-/// Telemetry selection for pubsub messages
-#[derive(Clone, defmt::Format, Serialize, Deserialize, PartialEq, Default)]
+/// Telemetry rate selection for pubsub messages
+#[derive(Clone, Copy, defmt::Format, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TelemetrySelection {
-    /// Do not send any pubsub telemetry
+    /// Reduced telemetry: LiDAR scans are not sent and IMU samples are decimated to about 5 Hz.
     #[default]
-    None,
-    /// Send pubsub control telemetry
-    Control,
-    /// Send pubsub guidance telemetry
-    Guidance,
-    /// Send pubsub navigation telemetry
-    Navigation,
-    /// Send pubsub imu telemetry
-    Imu,
-    /// Send data for remote operation
-    RemoteControl,
-    /// Send pubsub lidar telemetry
-    Lidar,
-    /// Position Inputs
-    PositionInputs,
-    /// All
-    All,
+    Slow,
+    /// Send all telemetry as it is received.
+    Fast,
 }
 
 impl TelemetrySelection {
-    /// Send control telemtry
-    pub fn is_send_control(&self) -> bool {
-        *self == Self::Control || *self == Self::RemoteControl || *self == Self::All
-    }
+    /// IMU samples received for each IMU sample sent in Slow mode (~50 Hz IMU to ~5 Hz).
+    pub const SLOW_IMU_DECIMATION: u8 = 10;
 
-    /// Send guidance telemtry
-    pub fn is_send_guidance(&self) -> bool {
-        *self == Self::Guidance || *self == Self::RemoteControl || *self == Self::All
-    }
-
-    /// Send nav telemtry
-    pub fn is_send_navigation(&self) -> bool {
-        *self == Self::Navigation || *self == Self::RemoteControl || *self == Self::All
-    }
-
-    /// Send imu telemtry
-    pub fn is_send_imu(&self) -> bool {
-        *self == Self::Imu
-            || *self == Self::RemoteControl
-            || *self == Self::PositionInputs
-            || *self == Self::All
-    }
-
-    /// Send lidar telemtry
+    /// Send lidar telemetry
     pub fn is_send_lidar(&self) -> bool {
-        *self == Self::Lidar || *self == Self::PositionInputs || *self == Self::All
+        *self == Self::Fast
+    }
+}
+
+/// Selects which IMU samples are forwarded as telemetry for a [`TelemetrySelection`].
+#[derive(Clone, Default)]
+pub struct ImuTelemetryDecimator {
+    samples_since_sent: u8,
+}
+
+impl ImuTelemetryDecimator {
+    /// Records a received IMU sample and returns whether it should be sent.
+    pub fn should_send(&mut self, selection: TelemetrySelection) -> bool {
+        match selection {
+            TelemetrySelection::Fast => {
+                self.samples_since_sent = 0;
+                true
+            }
+            TelemetrySelection::Slow => {
+                let send = self.samples_since_sent == 0;
+                self.samples_since_sent =
+                    (self.samples_since_sent + 1) % TelemetrySelection::SLOW_IMU_DECIMATION;
+                send
+            }
+        }
     }
 }
 
@@ -391,11 +381,28 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use super::hash_bytes;
+    use super::{ImuTelemetryDecimator, TelemetrySelection, hash_bytes};
 
     #[test]
     fn fnv1a_matches_known_vectors() {
         assert_eq!(hash_bytes(b""), 0x811c_9dc5);
         assert_eq!(hash_bytes(b"hello"), 0x4f9f_2cab);
+    }
+
+    #[test]
+    fn slow_telemetry_omits_lidar_and_decimates_imu() {
+        assert!(!TelemetrySelection::Slow.is_send_lidar());
+        let mut decimator = ImuTelemetryDecimator::default();
+        let sent = (0..50)
+            .filter(|_| decimator.should_send(TelemetrySelection::Slow))
+            .count();
+        assert_eq!(sent, 5);
+    }
+
+    #[test]
+    fn fast_telemetry_sends_everything() {
+        assert!(TelemetrySelection::Fast.is_send_lidar());
+        let mut decimator = ImuTelemetryDecimator::default();
+        assert!((0..50).all(|_| decimator.should_send(TelemetrySelection::Fast)));
     }
 }

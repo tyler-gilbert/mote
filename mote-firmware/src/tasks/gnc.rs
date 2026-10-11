@@ -24,6 +24,7 @@ struct Context {
     position: Option<router::Position>,
     reference_frame: Option<router::ReferenceFrame>,
     telemetry_selection: router::TelemetrySelection,
+    imu_telemetry_decimator: router::ImuTelemetryDecimator,
     imu_sample_counter: u8,
     lidar_scan_counter: u8,
     status: router::Status,
@@ -71,7 +72,7 @@ impl Context {
             );
             self.imu_sample_counter = 0;
         }
-        if self.telemetry_selection.is_send_imu() {
+        if self.imu_telemetry_decimator.should_send(self.telemetry_selection) {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::Imu(imu.clone()));
         }
         if let Some(reference_frame) = self.reference_frame.as_ref() {
@@ -89,9 +90,7 @@ impl Context {
     }
 
     async fn send_position(&self, position: router::Position) {
-        if self.telemetry_selection.is_send_navigation() {
-            let _ = router::TO_WIFI_CHAN.try_send(router::Message::Position(position));
-        }
+        let _ = router::TO_WIFI_CHAN.try_send(router::Message::Position(position));
     }
 
     async fn send_motor_command(&self, motor_drive: router::MotorDrive) {
@@ -101,17 +100,13 @@ impl Context {
     }
 
     async fn send_guidance(&self, guidance: Option<&router::Guidance>) {
-        if self.telemetry_selection.is_send_guidance()
-            && let Some(guidance) = guidance
-        {
+        if let Some(guidance) = guidance {
             let _ = router::TO_WIFI_CHAN.try_send(router::Message::Guidance(guidance.clone()));
         }
     }
 
     async fn send_control(&self, control: router::Control) {
-        if self.telemetry_selection.is_send_control() {
-            let _ = router::TO_WIFI_CHAN.try_send(router::Message::Control(control.clone()));
-        }
+        let _ = router::TO_WIFI_CHAN.try_send(router::Message::Control(control));
     }
 
     async fn handle_update(&mut self) {
@@ -144,7 +139,7 @@ impl Context {
                 None
             }
             router::Message::TelemetrySelection(telemetry_selection) => {
-                defmt::info!("Received Telemetry Selection Command");
+                defmt::info!("Received Telemetry Selection Command: {}", telemetry_selection);
                 self.telemetry_selection = telemetry_selection;
                 None
             }
