@@ -35,9 +35,6 @@ pub const SW_INTERIOR_ANGLE: units::PlaneAngle =
 pub const NE_INTERIOR_ANGLE: units::PlaneAngle =
     units::PlaneAngle::new(2.0 * core::f32::consts::PI / 3.0);
 
-/// Length of each leg of a reference structure, from the vertex to an edge.
-pub const STRUCTURE_LEG: units::Length = units::Length::new(0.2032);
-
 /// Largest angle between a structure's bisector and the robot's line of sight.
 ///
 /// The arena is square and each structure's bisector lies along its diagonal,
@@ -281,7 +278,7 @@ impl Context {
         timestamp: units::Time,
         reference_frame: &router::ReferenceFrame,
     ) -> NavigationReport {
-        let corners = detect_corners(revolution);
+        let corners = detect_corners(revolution, reference_frame.structure_side_wall_length);
         for corner in corners.iter() {
             match &corner.kind {
                 CornerKind::Northeast => {

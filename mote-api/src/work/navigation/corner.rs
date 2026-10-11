@@ -13,8 +13,9 @@
 //! their intersection.
 //!
 //! Before searching for the apex, a run must span the number of bins a
-//! structure would at its distance. Each leg is [`STRUCTURE_LEG`] long, so the
-//! edges are `2 * STRUCTURE_LEG * sin(60 deg)` apart. That full width faces the
+//! structure would at its distance. Each side wall is the reference frame's
+//! `structure_side_wall_length` long, so the edges are
+//! `2 * structure_side_wall_length * sin(60 deg)` apart. That full width faces the
 //! robot from the arena centre; from the southeast and northwest corners the
 //! line of sight is [`MAX_OFF_AXIS_VIEW`] off the bisector and the structure
 //! looks narrowest.
@@ -25,8 +26,8 @@
 
 use super::{
     ANGLE_TOL, BIN_COUNT, EDGE_JUMP, MAX_OFF_AXIS_VIEW, MAX_RMS, MIN_LEG_RATIO, NE_INTERIOR_ANGLE,
-    ONE_DEGREE, REVOLUTION_POINT_CAPACITY, Revolution, STRUCTURE_LEG, SW_INTERIOR_ANGLE,
-    WIDTH_SLACK_POINTS, is_finite_length, wrap_2pi, wrap_pi,
+    ONE_DEGREE, REVOLUTION_POINT_CAPACITY, Revolution, SW_INTERIOR_ANGLE, WIDTH_SLACK_POINTS,
+    is_finite_length, wrap_2pi, wrap_pi,
 };
 
 const MIN_WALL_POINTS: usize = 4;
@@ -82,8 +83,13 @@ struct Line {
 
 /// Detect the best southwest and northeast reference structures in a revolution.
 ///
-/// At most one observation of each kind is returned.
-pub fn detect_corners(revolution: &Revolution) -> heapless::Vec<CornerObservation, 4> {
+/// `structure_side_wall_length` is the length of each side wall of a
+/// reference structure, from the vertex to an edge. At most one observation of
+/// each kind is returned.
+pub fn detect_corners(
+    revolution: &Revolution,
+    structure_side_wall_length: units::Length,
+) -> heapless::Vec<CornerObservation, 4> {
     let mut points = heapless::Vec::<Point, REVOLUTION_POINT_CAPACITY>::new();
     for (x, y, range, bin) in revolution.points() {
         if is_finite_length(x) && is_finite_length(y) && is_finite_length(range) {
@@ -98,7 +104,8 @@ pub fn detect_corners(revolution: &Revolution) -> heapless::Vec<CornerObservatio
             continue;
         }
         let end = structure_end(&points, start);
-        let Some(observation) = observe_structure(&points[start..=end]) else {
+        let Some(observation) = observe_structure(&points[start..=end], structure_side_wall_length)
+        else {
             continue;
         };
         let best = match observation.kind {
@@ -147,8 +154,12 @@ fn structure_end(points: &[Point], start: usize) -> usize {
     end
 }
 
-fn observe_structure(run: &[Point]) -> Option<CornerObservation> {
-    if run.len() < 2 * MIN_WALL_POINTS + 1 || !has_structure_width(run) {
+fn observe_structure(
+    run: &[Point],
+    structure_side_wall_length: units::Length,
+) -> Option<CornerObservation> {
+    if run.len() < 2 * MIN_WALL_POINTS + 1 || !has_structure_width(run, structure_side_wall_length)
+    {
         return None;
     }
     let first = run[0];
@@ -237,7 +248,7 @@ fn structure_kind(
 /// and every degree of that is one bin. Viewed off its bisector, one edge of
 /// a structure is nearer than the other, so the widest view is bounded with
 /// the nearer edge's range and the narrowest with the farther one.
-fn has_structure_width(run: &[Point]) -> bool {
+fn has_structure_width(run: &[Point], structure_side_wall_length: units::Length) -> bool {
     let first = run[0].range;
     let last = run[run.len() - 1].range;
     let (nearer, farther) = if first < last {
@@ -245,7 +256,7 @@ fn has_structure_width(run: &[Point]) -> bool {
     } else {
         (last, first)
     };
-    let widest = STRUCTURE_LEG * (SW_INTERIOR_ANGLE / TWO).sin() * TWO;
+    let widest = structure_side_wall_length * (SW_INTERIOR_ANGLE / TWO).sin() * TWO;
     let narrowest = widest * MAX_OFF_AXIS_VIEW.cos();
     let most = expected_points(widest, nearer) + WIDTH_SLACK_POINTS;
     let fewest = expected_points(narrowest, farther) - WIDTH_SLACK_POINTS;

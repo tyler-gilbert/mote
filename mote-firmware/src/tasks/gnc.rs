@@ -20,7 +20,7 @@ struct Context {
     control_context: mote_api::work::control::Context,
     navigation_context: mote_api::work::navigation::Context,
     route: Option<router::Route>,
-    control_mode_enabled: bool,
+    control_mode: router::ControlMode,
     position: Option<router::Position>,
     reference_frame: Option<router::ReferenceFrame>,
     telemetry_selection: router::TelemetrySelection,
@@ -93,9 +93,35 @@ impl Context {
         let _ = router::TO_WIFI_CHAN.try_send(router::Message::Position(position));
     }
 
-    async fn send_motor_command(&self, motor_drive: router::MotorDrive) {
-        if self.control_mode_enabled {
+    /// Forwards `motor_drive` to the motors only if `source` is the active
+    /// control mode.
+    async fn send_motor_command(&self, source: router::ControlMode, motor_drive: router::MotorDrive) {
+        if self.control_mode == source {
             router::MOTOR_COMMAND_CHANNEL.send(motor_drive.into()).await;
+        }
+    }
+
+    async fn stop_motors(&self) {
+        let stop = router::MotorDrive {
+            left: units::AngularVelocity::new(0.0),
+            right: units::AngularVelocity::new(0.0),
+        };
+        router::MOTOR_COMMAND_CHANNEL.send(stop.into()).await;
+    }
+
+    async fn set_control_mode(&mut self, control_mode: router::ControlMode) {
+        defmt::info!("Received control mode command: {}", control_mode);
+        self.status.set_log(match control_mode {
+            router::ControlMode::None => "Received control mode: None",
+            router::ControlMode::Remote => "Received control mode: Remote",
+            router::ControlMode::Auto => "Received control mode: Auto",
+        });
+        // Stop on every mode change so commands from the previous source don't keep
+        // driving the motors, and always stop when `None` is received.
+        let mode_changed = self.control_mode != control_mode;
+        self.control_mode = control_mode;
+        if mode_changed || control_mode == router::ControlMode::None {
+            self.stop_motors().await;
         }
     }
 
@@ -118,7 +144,8 @@ impl Context {
             self.send_guidance(guidance.as_ref()).await;
             if let Some(control) = self.control_context.update(timestamp, guidance, &mut self.status) {
                 self.send_control(control.clone()).await;
-                self.send_motor_command(control.motor_drive).await;
+                self.send_motor_command(router::ControlMode::Auto, control.motor_drive)
+                    .await;
             }
         }
     }
@@ -126,16 +153,8 @@ impl Context {
     async fn handle_message(&mut self, message: router::Message) {
         let position = match message {
             router::Message::None => None,
-            router::Message::EnableControlMode => {
-                defmt::info!("Received Enable motor control command");
-                self.status.set_log("Received Enable motor control command");
-                self.control_mode_enabled = true;
-                None
-            }
-            router::Message::DisableControlMode => {
-                defmt::info!("Received Disable motor control command");
-                self.status.set_log("Received Disable motor control command");
-                self.control_mode_enabled = false;
+            router::Message::ControlMode(control_mode) => {
+                self.set_control_mode(control_mode).await;
                 None
             }
             router::Message::TelemetrySelection(telemetry_selection) => {
@@ -152,7 +171,7 @@ impl Context {
             }
             router::Message::MotorDrive(motor_drive) => {
                 defmt::info!("Received Motor Drive command");
-                self.send_motor_command(motor_drive).await;
+                self.send_motor_command(router::ControlMode::Remote, motor_drive).await;
                 None
             }
             router::Message::Imu(imu) => self.handle_imu(imu).await,

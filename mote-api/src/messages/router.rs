@@ -136,6 +136,8 @@ pub struct ReferenceFrame {
     pub global_diagonal: units::Length,
     /// Local SW-to-NE diagonal length; the diagonal bisects north and east.
     pub local_diagonal: units::Length,
+    /// Length of each side wall of a reference structure, from the vertex to an edge.
+    pub structure_side_wall_length: units::Length,
 }
 
 impl ReferenceFrame {
@@ -151,6 +153,7 @@ impl Default for ReferenceFrame {
             global_center: Coordinate::default(),
             global_diagonal: units::Length::new(0.0),
             local_diagonal: units::Length::new(0.0),
+            structure_side_wall_length: units::Length::new(0.0),
         }
     }
 }
@@ -227,6 +230,18 @@ impl ImuTelemetryDecimator {
             }
         }
     }
+}
+
+/// Selects which source, if any, is allowed to command the motors.
+#[derive(Clone, Copy, defmt::Format, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ControlMode {
+    /// No source may command the motors; entering this mode stops them.
+    #[default]
+    None,
+    /// Motor drive commands received from the host are applied to the motors.
+    Remote,
+    /// Motor drive output from the navigation, guidance, and control pipeline is applied to the motors.
+    Auto,
 }
 
 /// Direct motor drive command
@@ -325,10 +340,12 @@ impl Status {
 pub enum Message {
     /// No message or no available data.
     None,
-    /// Request to enable control mode.
-    EnableControlMode,
-    /// Request to disable control mode.
-    DisableControlMode,
+    /// Request to change the motor control mode.
+    ControlMode(ControlMode),
+    /// Unused. Holds the wire index of the removed `DisableControlMode` variant so that
+    /// later variants keep their serialized indices and recorded telemetry still decodes.
+    #[doc(hidden)]
+    Reserved,
     /// Enable pubsub telemetry
     TelemetrySelection(TelemetrySelection),
     /// Reference frame
