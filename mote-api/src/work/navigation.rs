@@ -223,10 +223,7 @@ impl Context {
         }
 
         let fix_position = (self.accepted_revolutions > accepted_revolutions_before)
-            .then(|| {
-                status.set_log("accepted revolutions");
-                self.reports.back().and_then(|report| report.pose.clone())
-            })
+            .then(|| self.reports.back().and_then(|report| report.pose.clone()))
             .flatten();
         if fix_position.is_some() {
             router::update_counter(&mut status.counters.navigation_lidar_scan_fix, 1);

@@ -29,6 +29,13 @@ pub struct Context {
     progress: Option<Progress>,
 }
 
+impl Context {
+    /// Reset the route progress to the first way point
+    pub fn reset_progress(&mut self) {
+        self.progress = None;
+    }
+}
+
 /// Progress along the route currently being followed.
 struct Progress {
     /// Hash of the route this progress belongs to; a different route restarts guidance.

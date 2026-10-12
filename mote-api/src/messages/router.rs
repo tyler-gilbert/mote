@@ -342,10 +342,8 @@ pub enum Message {
     None,
     /// Request to change the motor control mode.
     ControlMode(ControlMode),
-    /// Unused. Holds the wire index of the removed `DisableControlMode` variant so that
-    /// later variants keep their serialized indices and recorded telemetry still decodes.
-    #[doc(hidden)]
-    Reserved,
+    /// Reset the router
+    ResetRoute,
     /// Enable pubsub telemetry
     TelemetrySelection(TelemetrySelection),
     /// Reference frame

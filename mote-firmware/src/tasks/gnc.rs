@@ -164,19 +164,16 @@ impl Context {
                 None
             }
             router::Message::TelemetrySelection(telemetry_selection) => {
-                defmt::info!("Received Telemetry Selection Command: {}", telemetry_selection);
                 self.telemetry_selection = telemetry_selection;
                 None
             }
             router::Message::ReferenceFrame(reference_frame) => {
-                defmt::info!("Received reference frame");
                 self.status.set_log("Received reference frame");
                 self.status.reference_frame_hash = reference_frame.hash();
                 self.reference_frame = Some(reference_frame);
                 None
             }
             router::Message::MotorDrive(motor_drive) => {
-                defmt::info!("Received Motor Drive command");
                 self.send_motor_command(router::ControlMode::Remote, motor_drive).await;
                 None
             }
@@ -187,10 +184,14 @@ impl Context {
                 None
             }
             router::Message::Route(route) => {
-                defmt::info!("Received route");
                 self.status.set_log("Received the route");
                 self.status.route_hash = router::hash_route(&route);
                 self.route = Some(route);
+                None
+            }
+            router::Message::ResetRoute => {
+                self.guidance_context.reset_progress();
+                self.status.set_log("Reset the route");
                 None
             }
             _ => None,
